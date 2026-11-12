@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Windows PowerShell 5.1 is what endpoints run, so lint, test and build with it (shell: powershell).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester and PSScriptAnalyzer
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $paths = @('collector', 'analyst', 'build.ps1')
+          $findings = foreach ($p in $paths) { Invoke-ScriptAnalyzer -Path $p -Recurse -Settings .\PSScriptAnalyzerSettings.psd1 }
+          $findings | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
+          if ($findings) { throw "PSScriptAnalyzer reported $(@($findings).Count) finding(s)." }
+
+      - name: Pester
+        shell: powershell
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $c = New-PesterConfiguration
+          $c.Run.Path = '.\tests'
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          $c.TestResult.Enabled = $true
+          $c.TestResult.OutputPath = 'testResults.xml'
+          Invoke-Pester -Configuration $c
+
+      - name: Build single-file collector
+        shell: powershell
+        run: .\build.ps1
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Invoke-IRTriage-unsigned
+          path: |
+            dist/Invoke-IRTriage.ps1
+            dist/Invoke-IRTriage.ps1.sha256
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: testResults.xml
