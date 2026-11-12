@@ -1,0 +1,35 @@
+{
+  "name": "quick",
+  "description": "First-response triage: live network, sessions, processes, persistence. Designed to finish in under 60 seconds inside an EDR live-response session.",
+  "timeBudgetSeconds": 60,
+  "options": {
+    "lookbackHours": 24,
+    "maxEventsPerCollector": 500,
+    "signatures": false,
+    "recentFileDays": 7,
+    "maxDepth": 4,
+    "maxFiles": 2000
+  },
+  "collectors": [
+    "system_info",
+    "network_connections",
+    "network_config",
+    "dns_cache",
+    "arp_cache",
+    "hosts_file",
+    "proxy_settings",
+    "firewall_profiles",
+    "smb_sessions",
+    "smb_shares",
+    "smb_outbound",
+    "logged_on_users",
+    "local_admins",
+    "local_users",
+    "processes",
+    "autoruns_registry",
+    "scheduled_tasks",
+    "services",
+    "wmi_subscriptions",
+    "startup_folders"
+  ]
+}

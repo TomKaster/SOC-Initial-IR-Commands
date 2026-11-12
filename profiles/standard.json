@@ -1,0 +1,42 @@
+{
+  "name": "standard",
+  "description": "Quick profile plus Authenticode signer checks, installed software, Defender state and targeted event logs. Use once a host is confirmed suspicious.",
+  "timeBudgetSeconds": 300,
+  "options": {
+    "lookbackHours": 72,
+    "maxEventsPerCollector": 2000,
+    "signatures": true,
+    "recentFileDays": 7,
+    "maxDepth": 4,
+    "maxFiles": 2000
+  },
+  "collectors": [
+    "system_info",
+    "network_connections",
+    "network_config",
+    "dns_cache",
+    "arp_cache",
+    "hosts_file",
+    "proxy_settings",
+    "firewall_profiles",
+    "smb_sessions",
+    "smb_shares",
+    "smb_outbound",
+    "logged_on_users",
+    "local_admins",
+    "local_users",
+    "processes",
+    "autoruns_registry",
+    "scheduled_tasks",
+    "services",
+    "wmi_subscriptions",
+    "startup_folders",
+    "installed_software",
+    "defender",
+    "events_security",
+    "events_system",
+    "events_powershell",
+    "events_rdp",
+    "events_sysmon"
+  ]
+}
