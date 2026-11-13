@@ -216,6 +216,83 @@ function Get-IRScriptBlockLeads {
     }
 }
 
+# Default pipe names of C2 frameworks and remote-execution tools. Operators can rename them, so absence proves nothing.
+$script:IRPipePatterns = @(
+    @{ Pattern = '^MSSE-\d+-server$'; Why = 'Cobalt Strike default (artifact kit)'; Severity = 'high' },
+    @{ Pattern = '^msagent_[0-9a-f]{2,4}$'; Why = 'Cobalt Strike SMB beacon default'; Severity = 'high' },
+    @{ Pattern = '^status_[0-9a-f]{2}$'; Why = 'Cobalt Strike default'; Severity = 'high' },
+    @{ Pattern = '^postex_(ssh_)?[0-9a-f]{4}$'; Why = 'Cobalt Strike post-exploitation default'; Severity = 'high' },
+    @{ Pattern = '^(gruntsvc|jaccdpqnvbrrxlaf|ntsvcs_[0-9a-f]+|scerpc_?[0-9a-f]*)$'; Why = 'Covenant/PoshC2/Metasploit default'; Severity = 'high' },
+    @{ Pattern = '^RemCom_comm'; Why = 'RemCom/Impacket remote execution'; Severity = 'high' },
+    @{ Pattern = '^(PSEXESVC|paexec|csexec)'; Why = 'PsExec-style remote execution (also seen when IRTriage is launched with psexec)'; Severity = 'review' }
+)
+
+function Get-IRExtendedLeads {
+    <# Leads for named pipes, BITS jobs, PowerShell history and Security 4688/4698/4702/4719. #>
+    param($Triage)
+
+    foreach ($p in Get-IRRecords $Triage 'named_pipes') {
+        $name = [string]$p.PipeName
+        $hit = $script:IRPipePatterns | Where-Object { $name -match $_.Pattern } | Select-Object -First 1
+        if ($hit) { New-IRLead $hit.Severity 'Execution' "Named pipe $name" $hit.Why 'named_pipes' }
+    }
+
+    $msHost = '(?i)^https?://([^/]+\.)?(microsoft\.com|windowsupdate\.com|windows\.com|msedge\.net|office\.net|office\.com|live\.com|bing\.com|msftconnecttest\.com|azureedge\.net)(:\d+)?/'
+    foreach ($j in Get-IRRecords $Triage 'bits_jobs') {
+        $remotes = @(([string]$j.RemoteNames) -split '\s*\|\s*' | Where-Object { $_ })
+        $foreign = @($remotes | Where-Object { $_ -match '^(?i)(https?|smb)://|^\\\\' -and $_ -notmatch $msHost })
+        $detail = "owner=$($j.Owner) state=$($j.JobState) remote=$($remotes -join ', ') local=$($j.LocalNames)"
+        if ($j.NotifyCmdLine) {
+            New-IRLead 'high' 'Persistence' "BITS job '$($j.DisplayName)' runs a command on completion" "$($j.NotifyCmdLine) :: $detail" 'bits_jobs'
+        } elseif ($foreign.Count) {
+            New-IRLead 'review' 'Execution' "BITS job '$($j.DisplayName)' downloads from a non-Microsoft host" $detail 'bits_jobs'
+        }
+    }
+
+    # PowerShell history: one lead per distinct suspicious command per user.
+    $seen = @{}
+    foreach ($h in Get-IRRecords $Triage 'powershell_history') {
+        $cmd = [string]$h.Command
+        $sev = Get-IRCommandSeverity (' ' + $cmd)
+        if (-not $sev) { continue }
+        $key = "$($h.User)|$cmd"
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $why = Test-IRSuspiciousCommand (' ' + $cmd)
+        New-IRLead $sev 'Execution' "PowerShell history of $($h.User) ($($why -join ', '))" ("{0} line {1} :: {2}" -f $h.File, $h.LineNumber, $cmd) 'powershell_history'
+    }
+
+    # 4688: grade command lines, grouped so a looping task does not produce hundreds of leads.
+    $groups = @{}
+    foreach ($e in Get-IRRecords $Triage 'events_process_creation') {
+        $cmd = [string]$e.Data.CommandLine
+        if (-not $cmd -or $cmd -match 'IRTRIAGE|Invoke-IRTriage') { continue }
+        $sev = Get-IRCommandSeverity (' ' + $cmd)
+        if (-not $sev) { continue }
+        if (-not $groups.ContainsKey($cmd)) { $groups[$cmd] = [pscustomobject]@{ Sev = $sev; Events = (New-Object System.Collections.ArrayList) } }
+        [void]$groups[$cmd].Events.Add($e)
+    }
+    foreach ($cmd in $groups.Keys) {
+        $g = $groups[$cmd]
+        $first = $g.Events[0]
+        $times = @($g.Events | ForEach-Object { [string]$_.TimeCreated } | Sort-Object)
+        $when = $times[0]
+        if ($times.Count -gt 1) { $when = "$($times[0]) to $($times[-1]) x$($times.Count)" }
+        $why = Test-IRSuspiciousCommand (' ' + $cmd)
+        New-IRLead $g.Sev 'Execution' "Process created with suspicious command line ($($why -join ', '))" ("{0} {1}\{2} parent={3} :: {4}" -f $when, $first.Data.SubjectDomainName, $first.Data.SubjectUserName, $first.Data.ParentProcessName, $cmd) 'events_process_creation'
+    }
+
+    foreach ($e in Get-IRRecords $Triage 'events_security') {
+        # Windows servicing creates and updates \Microsoft\ tasks constantly; only report the others.
+        if ([int]$e.EventId -in 4698, 4702 -and [string]$e.Data.TaskName -like '\Microsoft\*') { continue }
+        switch ([int]$e.EventId) {
+            4698 { New-IRLead 'review' 'Persistence' "Scheduled task created: $($e.Data.TaskName)" ("{0} by {1}\{2}" -f $e.TimeCreated, $e.Data.SubjectDomainName, $e.Data.SubjectUserName) 'events_security' }
+            4702 { New-IRLead 'info' 'Persistence' "Scheduled task updated: $($e.Data.TaskName)" ("{0} by {1}\{2}" -f $e.TimeCreated, $e.Data.SubjectDomainName, $e.Data.SubjectUserName) 'events_security' }
+            4719 { New-IRLead 'review' 'Defense evasion' 'System audit policy changed (4719)' ("{0} by {1}\{2} subcategory={3} changes={4}" -f $e.TimeCreated, $e.Data.SubjectDomainName, $e.Data.SubjectUserName, $e.Data.SubcategoryGuid, $e.Data.AuditPolicyChanges) 'events_security' }
+        }
+    }
+}
+
 function New-IRLead {
     param([string]$Severity, [string]$Category, [string]$Title, [string]$Detail, [string]$Collector)
     [pscustomobject]@{ Severity = $Severity; Category = $Category; Title = $Title; Detail = $Detail; Collector = $Collector }
@@ -358,6 +435,8 @@ function Get-IRTriageLeads {
     foreach ($e in @(Get-IRRecords $Triage 'events_rdp' | Where-Object { $_.EventId -eq 1149 })) {
         [void]$leads.Add((New-IRLead 'info' 'Lateral movement' "RDP authentication from $($e.Data.Param3)" ("{0} user={1}\{2}" -f $e.TimeCreated, $e.Data.Param2, $e.Data.Param1) 'events_rdp'))
     }
+
+    foreach ($lead in @(Get-IRExtendedLeads $Triage)) { [void]$leads.Add($lead) }
 
     $order = @{ high = 0; review = 1; info = 2 }
     return @($leads | Sort-Object @{ Expression = { $order[$_.Severity] } }, Category, Title)

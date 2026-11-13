@@ -175,6 +175,17 @@ Describe 'Invoke-IRTriage.ps1 (integration, quick profile)' {
         $smb = $manifest.collectors | Where-Object name -eq 'smb_sessions'
         if ($manifest.case.elevated) { $smb.status | Should -Be 'ok' } else { $smb.status | Should -Be 'skipped_not_elevated' }
     }
+    It 'collects named pipes and PowerShell history without errors' {
+        ($manifest.collectors | Where-Object name -eq 'named_pipes').records | Should -BeGreaterThan 0
+        ($manifest.collectors | Where-Object name -eq 'powershell_history').status | Should -Be 'ok'
+    }
+    It 'prints paste-ready getfile lines' {
+        # Status lines are Write-Host (information stream), so capture stream 6 for this run.
+        $gf = Join-Path $tmp 'getfile'
+        $all = @(& $collector -CaseId 'PESTER-4' -OutputPath $gf -Collectors system_info 6>&1 | ForEach-Object { "$_" }) -join "`n"
+        $all | Should -Match ([regex]::Escape("getfile ""$gf.zip"""))
+        $all | Should -Match ([regex]::Escape("getfile ""$gf-report.html"""))
+    }
     It 'collects core artifacts' {
         foreach ($n in 'system_info', 'network_connections', 'processes', 'services') {
             ($manifest.collectors | Where-Object name -eq $n).records | Should -BeGreaterThan 0 -Because $n
@@ -185,6 +196,7 @@ Describe 'Invoke-IRTriage.ps1 (integration, quick profile)' {
         $result.reportPath | Should -Be "$out-report.html"
         Test-Path -LiteralPath $result.reportPath | Should -BeTrue
         [System.IO.File]::ReadAllText($result.reportPath) | Should -Match ([regex]::Escape($env:COMPUTERNAME))
+        [System.IO.File]::ReadAllText($result.reportPath) | Should -Match '<section id="processes">'
     }
     It 'records host IP addresses in the manifest' {
         $manifest.host.PSObject.Properties.Name | Should -Contain 'primaryIPv4'

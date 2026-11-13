@@ -93,7 +93,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'   # Progress bars slow down Compress-Archive and break headless sessions.
-$script:IRToolVersion = '2.1.1'
+$script:IRToolVersion = '2.2.0'
 $script:IRBuildInfo = 'source'
 
 #region BUILD:MODULES
@@ -333,6 +333,9 @@ $errors = @($results | Where-Object { $_.status -eq 'error' }).Count
 $skipped = @($results | Where-Object { $_.status -like 'skipped*' }).Count
 Write-IRStatus ("Done in {0}s. collectors ok={1} error={2} skipped={3}" -f $manifest.run.durationSeconds, (@($results | Where-Object { $_.status -eq 'ok' }).Count), $errors, $skipped)
 if ($zipHash) { Write-IRStatus "Zip: $zipPath  SHA256=$zipHash" }
+# Paste-ready retrieval commands for EDR live response consoles (MDE getfile; CrowdStrike RTR uses 'get').
+if ($zipHash) { Write-IRStatus "Retrieve evidence: getfile ""$zipPath""" }
+if ($reportPath) { Write-IRStatus "Retrieve report:   getfile ""$reportPath""" }
 
 $summary = [ordered]@{
     host = $env:COMPUTERNAME; caseId = $CaseId; profile = $TriageProfile; elevated = $elevated

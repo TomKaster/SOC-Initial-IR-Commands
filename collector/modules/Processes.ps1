@@ -59,3 +59,21 @@ function Get-IRProcesses {
         }
     }
 }
+
+function Get-IRNamedPipes {
+    <#
+      Named pipes open right now. C2 frameworks and remote-execution tools use recognisable default names
+      (Cobalt Strike msagent_##, PsExec PSEXESVC, ...). Directory.GetFiles fails on .NET Framework if any pipe
+      name contains characters that are illegal in paths, so fall back to the provider listing.
+    #>
+    [CmdletBinding()]
+    param($Context)
+    $names = @()
+    try {
+        $names = @([System.IO.Directory]::GetFiles('\\.\pipe\') | ForEach-Object { $_.Substring(9) })
+    } catch {
+        $names = @(Get-ChildItem -LiteralPath '\\.\pipe\' -Name -ErrorAction SilentlyContinue)
+        $Context.CollectorNote = 'pipe listing fell back to Get-ChildItem (a pipe name contains illegal path characters)'
+    }
+    foreach ($n in ($names | Sort-Object -Unique)) { [pscustomobject]@{ PipeName = $n } }
+}

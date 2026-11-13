@@ -142,6 +142,48 @@ function Get-IRLocalAdmins {
     }
 }
 
+function Get-IRPowerShellHistory {
+    <#
+      PSReadLine command history (ConsoleHost_history.txt and other hosts' *_history.txt) for every profile.
+      Shows what was typed interactively, which script block logging misses when it is off. Keeps the last
+      2000 lines of each file. Opened with ReadWrite sharing so a live PSReadLine session does not block it.
+    #>
+    [CmdletBinding()]
+    param($Context)
+    $maxLines = 2000
+    $truncated = @()
+    foreach ($u in Get-IRUserProfileDirs) {
+        $dir = Join-Path $u.FullName 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*_history.txt' -File -Force -ErrorAction SilentlyContinue)) {
+            $lines = New-Object System.Collections.Generic.List[string]
+            $fs = $null; $sr = $null
+            try {
+                $fs = New-Object System.IO.FileStream($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $sr = New-Object System.IO.StreamReader($fs, $true)
+                while ($null -ne ($line = $sr.ReadLine())) { $lines.Add($line) }
+            } catch {
+                continue
+            } finally {
+                if ($sr) { $sr.Dispose() } elseif ($fs) { $fs.Dispose() }
+            }
+            $start = 0
+            if ($lines.Count -gt $maxLines) { $start = $lines.Count - $maxLines; $truncated += "$($u.Name)\$($f.Name)" }
+            for ($i = $start; $i -lt $lines.Count; $i++) {
+                if ([string]::IsNullOrWhiteSpace($lines[$i])) { continue }
+                [pscustomobject]@{
+                    User             = $u.Name
+                    File             = $f.Name
+                    LineNumber       = $i + 1
+                    Command          = $lines[$i]
+                    FileLastWriteUtc = $f.LastWriteTimeUtc
+                }
+            }
+        }
+    }
+    if ($truncated) { $Context.CollectorNote = "kept last $maxLines lines of: $($truncated -join ', ')" }
+}
+
 function Get-IRLocalUsers {
     [CmdletBinding()]
     param($Context)

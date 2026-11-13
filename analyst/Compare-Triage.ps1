@@ -37,6 +37,7 @@ function Get-IRDiffRules {
         @{ Category = 'process_images';    Collector = 'processes';           Key = { "$($_.ExecutablePath)".ToLowerInvariant() }; Detail = { $_.Sha256 }; Filter = { $_.ExecutablePath } },
         @{ Category = 'hosts_file';        Collector = 'hosts_file';          Key = { "$($_.HostName)" };                          Detail = { $_.IPAddress } },
         @{ Category = 'smb_shares';        Collector = 'smb_shares';          Key = { $_.Name };                                   Detail = { $_.Path } },
+        @{ Category = 'bits_jobs';         Collector = 'bits_jobs';           Key = { "$($_.Owner)|$($_.DisplayName)|$($_.RemoteNames)" }; Detail = { "notify=$($_.NotifyCmdLine) | $($_.LocalNames)" } },
         @{ Category = 'browser_extensions'; Collector = 'browser_extensions'; Key = { "$($_.Browser)|$($_.ExtensionId)" };         Detail = { "$($_.Name) $($_.Version)" } }
     )
 }

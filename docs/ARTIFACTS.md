@@ -20,6 +20,9 @@ What each collector gathers, the question it helps answer, and the related MITRE
 | `local_admins` | Q S F | | Has anyone been added to local Administrators? | T1098, T1136.001 |
 | `local_users` | Q S F | | New or re-enabled local accounts. | T1136.001 |
 | `processes` | Q S F | | Full process tree with command lines, owner, image hash (and signer in S/F). | T1059, T1055, T1036 |
+| `named_pipes` | Q S F | | Open named pipes. Default C2 pipe names (Cobalt Strike `msagent_##`, `postex_####`, ...) and PsExec-style pipes. | T1570, T1021.002, T1071 |
+| `powershell_history` | Q S F | | What was typed at PowerShell prompts (PSReadLine history per user, last 2,000 lines per file). | T1059.001 |
+| `bits_jobs` | Q S F | yes | BITS jobs for all users: remote URLs, local files, notify command lines. | T1197 |
 | `autoruns_registry` | Q S F | | Run/RunOnce, Winlogon, AppInit, LSA packages, IFEO debuggers (per user and machine). | T1547.001, T1547.004, T1546.010, T1546.012, T1547.002 |
 | `scheduled_tasks` | Q S F | | Tasks with actions, run-as, triggers, last run time, image hash. | T1053.005 |
 | `services` | Q S F | | Services with image path, ServiceDll, account, hash. | T1543.003 |
@@ -27,7 +30,8 @@ What each collector gathers, the question it helps answer, and the related MITRE
 | `startup_folders` | Q S F | | Startup folder items with resolved `.lnk` targets. | T1547.001 |
 | `installed_software` | S F | | Remote access tools (AnyDesk, ScreenConnect...), unexpected installs. | T1219 |
 | `defender` | S F | | RTP / tamper protection state, **exclusions**, detections, Defender event log. | T1562.001 |
-| `events_security` | S F | yes | 4624/4625/4648/4672 logons, 4720 + 4728/4732/4756 account and group changes, 4697 service install, 1102 log cleared. | T1078, T1110, T1098, T1070.001 |
+| `events_security` | S F | yes | 4624/4625/4648/4672 logons, 4720 + 4728/4732/4756 account and group changes, 4697 service install, 4698/4702 scheduled task created/updated, 4719 audit policy changed, 1102 log cleared. | T1078, T1110, T1098, T1053.005, T1562.002, T1070.001 |
+| `events_process_creation` | S F | yes | 4688 process creation with command line (needs "Audit Process Creation" and command-line inclusion by GPO). Own event budget. | T1059 |
 | `events_system` | S F | | 7045/7040 service install/changes, 104 log cleared, boot/shutdown. | T1543.003, T1070.001 |
 | `events_powershell` | S F | | 4104 script block and 4103 module logging. | T1059.001 |
 | `events_rdp` | S F | | 1149 RDP auth, 21/24/25 session logon/disconnect/reconnect. | T1021.001 |

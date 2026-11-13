@@ -45,6 +45,12 @@ run Invoke-IRTriage.ps1 -parameters "-CaseId INC-1042 -Profile quick -Analyst jd
 getfile "C:\ProgramData\IRTriage\INC-1042_fleet.zip"
 ```
 Compare the downloaded zip's hash to the `IRTRIAGE_RESULT` line shown in the console.
+
+**Where the output lands.** `run` executes the script on the device as `NT AUTHORITY\SYSTEM` (Windows PowerShell 5.1, elevated,
+no desktop, so `-OpenReport` does nothing). Only the console text comes back to the portal. The evidence stays on the device:
+without `-OutputPath` it is `C:\ProgramData\IRTriage\<CaseId>_<HOST>_<yyyyMMddTHHmmssZ>.zip` (+ `.zip.sha256`) and
+`...-report.html` beside it. The last console lines print ready-to-paste `getfile "..."` commands for both. `getfile`
+downloads through the portal to your browser's download folder.
 Live response commands time out after 10 minutes. For `full`, either add `-SkipSlow` or run with `&` (background) and `getfile` later.
 
 **Many hosts (API)** — `analyst\Invoke-FleetTriage.ps1`

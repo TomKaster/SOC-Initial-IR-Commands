@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.2.0 - unreleased
+
+### Added
+- **Processes** section in the report: every process with PID, PPID, owner, session, start time, command line, image path,
+  SHA-256 and signer, in parent-child (tree) order, with a search box.
+- `powershell_history` collector (all profiles): PSReadLine `*_history.txt` for every user profile, last 2,000 lines per file.
+  Shown under Users and sessions; suspicious commands become leads.
+- `named_pipes` collector (all profiles): open named pipes. Default Cobalt Strike / Covenant / PoshC2 / RemCom pipe names are
+  high leads; PsExec-style pipes (`PSEXESVC`, `paexec`, `csexec`) are review.
+- `bits_jobs` collector (all profiles, admin): BITS jobs for all users via `Get-BitsTransfer -AllUsers`, falling back to
+  `bitsadmin /list /allusers /verbose`. Notify command lines are high leads; downloads from non-Microsoft hosts are review.
+  `Compare-Triage.ps1` diffs BITS jobs.
+- `events_process_creation` collector (standard/full, admin): Security 4688 with its own event budget. Suspicious command lines
+  are grouped into leads. The collector note says when process-creation auditing or command-line logging is off.
+- `events_security` also collects 4698/4702 (scheduled task created/updated) and 4719 (audit policy changed); non-Microsoft
+  task creation and audit policy changes are review leads.
+- The console output ends with paste-ready `getfile "<path>"` lines for the zip and the report.
+
 ## 2.1.1 - unreleased
 
 ### Fixed

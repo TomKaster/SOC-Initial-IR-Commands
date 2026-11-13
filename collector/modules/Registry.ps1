@@ -21,6 +21,9 @@ $script:IRCollectors = [ordered]@{
     local_admins        = @{ Function = 'Get-IRLocalAdmins';        RequiresAdmin = $false; Slow = $false; Tabular = $true }
     local_users         = @{ Function = 'Get-IRLocalUsers';         RequiresAdmin = $false; Slow = $false; Tabular = $true }
     processes           = @{ Function = 'Get-IRProcesses';          RequiresAdmin = $false; Slow = $false; Tabular = $true }
+    named_pipes         = @{ Function = 'Get-IRNamedPipes';         RequiresAdmin = $false; Slow = $false; Tabular = $true }
+    powershell_history  = @{ Function = 'Get-IRPowerShellHistory';  RequiresAdmin = $false; Slow = $false; Tabular = $true }
+    bits_jobs           = @{ Function = 'Get-IRBitsJobs';           RequiresAdmin = $true;  Slow = $false; Tabular = $true }
     autoruns_registry   = @{ Function = 'Get-IRAutorunsRegistry';   RequiresAdmin = $false; Slow = $false; Tabular = $true }
     scheduled_tasks     = @{ Function = 'Get-IRScheduledTasks';     RequiresAdmin = $false; Slow = $false; Tabular = $true }
     services            = @{ Function = 'Get-IRServices';           RequiresAdmin = $false; Slow = $false; Tabular = $true }
@@ -29,6 +32,7 @@ $script:IRCollectors = [ordered]@{
     installed_software  = @{ Function = 'Get-IRInstalledSoftware';  RequiresAdmin = $false; Slow = $false; Tabular = $true }
     defender            = @{ Function = 'Get-IRDefender';           RequiresAdmin = $false; Slow = $false; Tabular = $false }
     events_security     = @{ Function = 'Get-IREventsSecurity';     RequiresAdmin = $true;  Slow = $false; Tabular = $false }
+    events_process_creation = @{ Function = 'Get-IREventsProcessCreation'; RequiresAdmin = $true; Slow = $false; Tabular = $false }
     events_system       = @{ Function = 'Get-IREventsSystem';       RequiresAdmin = $false; Slow = $false; Tabular = $false }
     events_powershell   = @{ Function = 'Get-IREventsPowerShell';   RequiresAdmin = $false; Slow = $false; Tabular = $false }
     events_rdp          = @{ Function = 'Get-IREventsRdp';          RequiresAdmin = $false; Slow = $false; Tabular = $false }

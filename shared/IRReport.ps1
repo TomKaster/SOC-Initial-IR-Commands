@@ -223,6 +223,17 @@ $script:IRReportJs = @'
   }
   Array.prototype.forEach.call(document.querySelectorAll("table[data-resizable]"), setupTable);
 
+  // Plain text search for other tables: <input data-filter-table="table-id">.
+  Array.prototype.forEach.call(document.querySelectorAll("input[data-filter-table]"), function (inp) {
+    var t = document.getElementById(inp.getAttribute("data-filter-table"));
+    if (!t || !t.tBodies[0]) return;
+    var trs = Array.prototype.slice.call(t.tBodies[0].rows);
+    inp.addEventListener("input", function () {
+      var q = (inp.value || "").toLowerCase();
+      trs.forEach(function (r) { r.hidden = !!q && r.textContent.toLowerCase().indexOf(q) === -1; });
+    });
+  });
+
   // Leads: severity filter + text search.
   var leads = document.getElementById("leads-table");
   if (leads) {
@@ -341,6 +352,50 @@ function ConvertTo-IRReportTable {
     }
     [void]$sb.Append('</tbody></table></div>')
     return $sb.ToString()
+}
+
+function Get-IRProcessTreeRows {
+    <#
+      Orders processes depth-first under their parents and adds TreeName (name indented by depth).
+      A parent only counts if the collector resolved ParentName (it rejects reused PIDs), so orphans become roots.
+    #>
+    param([object[]]$Processes)
+    $byPid = @{}
+    foreach ($p in $Processes) { if ($null -ne $p.ProcessId) { $byPid[[int]$p.ProcessId] = $p } }
+    $children = @{}
+    $roots = New-Object System.Collections.ArrayList
+    foreach ($p in $Processes) {
+        $ppid = [int]$p.ParentProcessId
+        if ($p.ParentName -and $byPid.ContainsKey($ppid) -and $ppid -ne [int]$p.ProcessId) {
+            if (-not $children.ContainsKey($ppid)) { $children[$ppid] = New-Object System.Collections.ArrayList }
+            [void]$children[$ppid].Add($p)
+        } else { [void]$roots.Add($p) }
+    }
+    $out = New-Object System.Collections.ArrayList
+    $seen = @{}
+    $stack = New-Object System.Collections.Stack
+    foreach ($r in @($roots | Sort-Object { [int]$_.ProcessId } -Descending)) { $stack.Push(@($r, 0)) }
+    while ($stack.Count -gt 0) {
+        $item = $stack.Pop()
+        $p = $item[0]; $depth = $item[1]
+        $id = [int]$p.ProcessId
+        if ($seen.ContainsKey($id)) { continue }
+        $seen[$id] = $true
+        $row = $p | Select-Object *
+        $prefix = ''
+        if ($depth -gt 0) { $prefix = ('. ' * ($depth - 1)) + '\_ ' }
+        $row | Add-Member -NotePropertyName TreeName -NotePropertyValue ($prefix + $p.Name) -Force
+        [void]$out.Add($row)
+        if ($children.ContainsKey($id)) {
+            foreach ($c in @($children[$id] | Sort-Object { [int]$_.ProcessId } -Descending)) { $stack.Push(@($c, ($depth + 1))) }
+        }
+        if ($stack.Count -eq 0 -and $seen.Count -lt $byPid.Count) {
+            # Parent links that form a loop (equal timestamps on reused PIDs) have no root; list them flat.
+            $left = @($Processes | Where-Object { -not $seen.ContainsKey([int]$_.ProcessId) } | Sort-Object { [int]$_.ProcessId } -Descending)
+            foreach ($l in $left) { $stack.Push(@($l, 0)) }
+        }
+    }
+    return $out.ToArray()
 }
 
 function New-IRReportSection {
@@ -478,6 +533,17 @@ function New-IRTriageReport {
             @{ Name = 'ProcessPath'; Label = 'Image path'; Kind = 'mono'; Wide = $true }))
     [void]$body.Append((New-IRReportSection -Id 'network' -Title 'Network' -Body $netBody))
 
+    $procRows = @(Get-IRProcessTreeRows @(Get-IRRecords $Triage 'processes'))
+    [void]$nav.Add(@('processes', 'Processes'))
+    $procBody = '<div class="toolbar"><input id="proc-search" class="search" type="search" placeholder="Search processes" aria-label="Search processes" data-filter-table="proc-table"></div>' +
+        (ConvertTo-IRReportTable -Rows $procRows -Id 'proc-table' -Empty 'No processes collected.' -Columns @(
+            @{ Name = 'ProcessId'; Label = 'PID'; Kind = 'num' }, @{ Name = 'ParentProcessId'; Label = 'PPID'; Kind = 'num' },
+            @{ Name = 'TreeName'; Label = 'Process (tree)'; Kind = 'mono' }, @{ Name = 'Owner'; Label = 'Owner'; Kind = 'text' },
+            @{ Name = 'SessionId'; Label = 'Session'; Kind = 'num' }, @{ Name = 'CreationDate'; Label = 'Started (UTC)'; Kind = 'mono' },
+            @{ Name = 'CommandLine'; Label = 'Command line'; Kind = 'mono'; Wide = $true }, @{ Name = 'ExecutablePath'; Label = 'Image path'; Kind = 'mono'; Wide = $true },
+            @{ Name = 'Sha256'; Label = 'SHA-256'; Kind = 'mono' }, @{ Name = 'Signer'; Label = 'Signer'; Kind = 'text' }))
+    [void]$body.Append((New-IRReportSection -Id 'processes' -Title 'Processes' -Count "$($procRows.Count) processes" -Lede 'Running processes in parent-child order, as of collection time. Suspicious command lines, Office children and images in user-writable or unsigned paths are also raised as leads.' -Body $procBody))
+
     [void]$nav.Add(@('accounts', 'Users and sessions'))
     $acctBody = '<h3>Logged-on users</h3>' +
         (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'logged_on_users') -Columns @(
@@ -489,7 +555,12 @@ function New-IRTriageReport {
         '<h3>Inbound SMB sessions</h3>' +
         (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'smb_sessions') -Empty 'No inbound SMB sessions, or the collection was not elevated.' -Columns @(
             @{ Name = 'ClientComputerName'; Label = 'Client'; Kind = 'mono' }, @{ Name = 'ClientUserName'; Label = 'User'; Kind = 'text' },
-            @{ Name = 'NumOpens'; Label = 'Open files'; Kind = 'num' }, @{ Name = 'SecondsExists'; Label = 'Seconds connected'; Kind = 'num' }))
+            @{ Name = 'NumOpens'; Label = 'Open files'; Kind = 'num' }, @{ Name = 'SecondsExists'; Label = 'Seconds connected'; Kind = 'num' })) +
+        '<h3>PowerShell history <span class="count">' + @(Get-IRRecords $Triage 'powershell_history').Count + '</span></h3>' +
+        '<div class="toolbar"><input id="pshist-search" class="search" type="search" placeholder="Search history" aria-label="Search PowerShell history" data-filter-table="pshist-table"></div>' +
+        (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'powershell_history') -Id 'pshist-table' -Empty 'No PSReadLine history files found.' -Columns @(
+            @{ Name = 'User'; Label = 'User'; Kind = 'text' }, @{ Name = 'LineNumber'; Label = 'Line'; Kind = 'num' },
+            @{ Name = 'Command'; Label = 'Command'; Kind = 'mono'; Wide = $true }, @{ Name = 'File'; Label = 'File'; Kind = 'mono' }))
     [void]$body.Append((New-IRReportSection -Id 'accounts' -Title 'Users and sessions' -Body $acctBody))
 
     [void]$nav.Add(@('collection', 'Collection'))

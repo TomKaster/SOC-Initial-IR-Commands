@@ -91,7 +91,23 @@ function Get-IREventsSecurity {
     # 4728/4732/4756 added to privileged group, 4697 service installed, 1102 audit log cleared.
     [CmdletBinding()]
     param($Context)
-    Get-IREvents -LogName 'Security' -Id 4624, 4625, 4648, 4672, 4720, 4728, 4732, 4756, 4697, 1102 -Context $Context
+    # 4698/4702 scheduled task created/updated, 4719 system audit policy changed.
+    Get-IREvents -LogName 'Security' -Id 4624, 4625, 4648, 4672, 4720, 4728, 4732, 4756, 4697, 4698, 4702, 4719, 1102 -Context $Context
+}
+
+function Get-IREventsProcessCreation {
+    # 4688 process creation. Its own collector so its (often large) volume cannot crowd logon events out of
+    # events_security's MaxEvents budget. CommandLine is only present when "Include command line in process
+    # creation events" is enabled by policy.
+    [CmdletBinding()]
+    param($Context)
+    $events = @(Get-IREvents -LogName 'Security' -Id 4688 -Context $Context)
+    if ($events.Count -eq 0) {
+        $Context.CollectorNote = (("{0} no 4688 events in the lookback window: 'Audit Process Creation' is probably not enabled" -f $Context.CollectorNote)).Trim()
+    } elseif (-not @($events | Where-Object { $_.Data.CommandLine }).Count) {
+        $Context.CollectorNote = (("{0} 4688 events have no CommandLine: enable 'Include command line in process creation events'" -f $Context.CollectorNote)).Trim()
+    }
+    $events
 }
 
 function Get-IREventsSystem {

@@ -115,6 +115,66 @@ function Get-IRScheduledTasks {
     }
 }
 
+function Get-IRBitsJobs {
+    <#
+      BITS jobs for all users (T1197: download and persistence via notify command lines). Uses Get-BitsTransfer,
+      and falls back to parsing `bitsadmin /list /allusers /verbose` where the cmdlet fails (it can refuse
+      sessions without a network logon, e.g. some SYSTEM/remote contexts).
+    #>
+    [CmdletBinding()]
+    param($Context)
+    $jobs = $null
+    $cmdletError = $null
+    if (Get-Command Get-BitsTransfer -ErrorAction SilentlyContinue) {
+        try { $jobs = @(Get-BitsTransfer -AllUsers -ErrorAction Stop) } catch { $cmdletError = $_.Exception.Message; $jobs = $null }
+    } else { $cmdletError = 'BitsTransfer module not available' }
+
+    if ($null -ne $jobs) {
+        foreach ($j in $jobs) {
+            $notify = $null
+            if ($j.PSObject.Properties['NotifyCmdLine']) { $notify = [string]$j.NotifyCmdLine }
+            [pscustomobject]@{
+                JobId         = [string]$j.JobId
+                DisplayName   = $j.DisplayName
+                Owner         = $j.OwnerAccount
+                JobState      = [string]$j.JobState
+                TransferType  = [string]$j.TransferType
+                CreationTime  = $j.CreationTime
+                ModifiedTime  = $j.ModificationTime
+                RemoteNames   = ((@($j.FileList) | ForEach-Object { $_.RemoteName }) -join ' | ')
+                LocalNames    = ((@($j.FileList) | ForEach-Object { $_.LocalName }) -join ' | ')
+                NotifyCmdLine = $notify
+                Source        = 'Get-BitsTransfer'
+            }
+        }
+        return
+    }
+
+    $bitsadmin = Join-Path $env:SystemRoot 'System32\bitsadmin.exe'
+    if (-not (Test-Path -LiteralPath $bitsadmin)) { throw "Get-BitsTransfer failed ($cmdletError) and bitsadmin.exe is not present" }
+    $Context.CollectorNote = "Get-BitsTransfer failed ($cmdletError); parsed bitsadmin output instead"
+    $text = (& $bitsadmin /list /allusers /verbose 2>&1 | Out-String)
+    foreach ($block in @([regex]::Split($text, '(?m)^(?=GUID: )') | Where-Object { $_ -match '^GUID: ' })) {
+        $g = { param($pattern) $m = [regex]::Match($block, $pattern, 'Multiline'); if ($m.Success) { $m.Groups[1].Value.Trim() } else { $null } }
+        $files = @([regex]::Matches($block, '(?m)^\s+\d+\s*/\s*(?:\d+|UNKNOWN)\s+\w+\s+(\S+)\s+->\s+(.+?)\s*$') | ForEach-Object { , @($_.Groups[1].Value, $_.Groups[2].Value) })
+        $notify = & $g "^NOTIFICATION COMMAND LINE:\s*(.+)$"
+        if ($notify -eq 'none') { $notify = $null }
+        [pscustomobject]@{
+            JobId         = & $g '^GUID:\s*(\{[^}]+\})'
+            DisplayName   = & $g "DISPLAY:\s*'(.*)'\s*$"
+            Owner         = & $g 'OWNER:\s*(.+?)\s*$'
+            JobState      = & $g 'STATE:\s*(\S+)'
+            TransferType  = & $g 'TYPE:\s*(\S+)'
+            CreationTime  = & $g 'CREATION TIME:\s*(.+?)\s+MODIFICATION TIME'
+            ModifiedTime  = & $g 'MODIFICATION TIME:\s*(.+?)\s*$'
+            RemoteNames   = (($files | ForEach-Object { $_[0] }) -join ' | ')
+            LocalNames    = (($files | ForEach-Object { $_[1] }) -join ' | ')
+            NotifyCmdLine = $notify
+            Source        = 'bitsadmin'
+        }
+    }
+}
+
 function Get-IRServices {
     [CmdletBinding()]
     param($Context)
