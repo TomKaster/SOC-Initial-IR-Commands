@@ -73,6 +73,8 @@ h2 { font: 600 21px/1.25 var(--font-display); margin: 0; letter-spacing: .01em; 
 h3 { font: 600 16px/1.3 var(--font-display); margin: 22px 0 8px; }
 .count { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 .lede { color: var(--muted); margin: 0 0 12px; max-width: 75ch; }
+.lede b { color: var(--text); font-weight: 600; }
+.lede code { font: 13px var(--font-mono); }
 .empty { color: var(--muted); background: var(--card); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px 16px; margin: 0; }
 
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 0 0 10px; }
@@ -627,6 +629,7 @@ function New-IRTriageReport {
     [void]$nav.Add(@('apps', 'Installed applications'))
     [void]$body.Append($appsSection)
 
+    $histRows = @(Get-IRHistoryTimeline $Triage)
     [void]$nav.Add(@('accounts', 'Users and sessions'))
     $acctBody = '<h3>Logged-on users</h3>' +
         (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'logged_on_users') -Columns @(
@@ -639,10 +642,12 @@ function New-IRTriageReport {
         (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'smb_sessions') -Empty 'No inbound SMB sessions, or the collection was not elevated.' -Columns @(
             @{ Name = 'ClientComputerName'; Label = 'Client'; Kind = 'mono' }, @{ Name = 'ClientUserName'; Label = 'User'; Kind = 'text' },
             @{ Name = 'NumOpens'; Label = 'Open files'; Kind = 'num' }, @{ Name = 'SecondsExists'; Label = 'Seconds connected'; Kind = 'num' })) +
-        '<h3>PowerShell history <span class="count">' + @(Get-IRRecords $Triage 'powershell_history').Count + '</span></h3>' +
+        '<h3>PowerShell history <span class="count">' + $histRows.Count + '</span></h3>' +
+        '<p class="lede">PSReadLine history files store no timestamps. <b>Exact</b>: the same command was logged by script block logging (4104) for the same user. <b>Approx</b>: the newest line, at the time the file was last saved. <b>Range</b>: between the nearest dated commands, since history is in run order. Exact times need <code>events_powershell</code> (standard and full profiles) and only reach back as far as that log does.</p>' +
         '<div class="toolbar"><input id="pshist-search" class="search" type="search" placeholder="Search history" aria-label="Search PowerShell history" data-filter-table="pshist-table"></div>' +
-        (ConvertTo-IRReportTable -Rows @(Get-IRRecords $Triage 'powershell_history') -Id 'pshist-table' -Empty 'No PSReadLine history files found.' -Columns @(
+        (ConvertTo-IRReportTable -Rows $histRows -Id 'pshist-table' -Empty 'No PSReadLine history files found.' -Columns @(
             @{ Name = 'User'; Label = 'User'; Kind = 'text' }, @{ Name = 'LineNumber'; Label = 'Line'; Kind = 'num' },
+            @{ Name = 'RanAt'; Label = 'Ran at (UTC)'; Kind = 'mono' }, @{ Name = 'TimeBasis'; Label = 'Basis'; Kind = 'text' },
             @{ Name = 'Command'; Label = 'Command'; Kind = 'mono'; Wide = $true }, @{ Name = 'File'; Label = 'File'; Kind = 'mono' }))
     [void]$body.Append((New-IRReportSection -Id 'accounts' -Title 'Users and sessions' -Body $acctBody))
 

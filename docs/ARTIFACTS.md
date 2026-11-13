@@ -21,7 +21,7 @@ What each collector gathers, the question it helps answer, and the related MITRE
 | `local_users` | Q S F | | New or re-enabled local accounts. | T1136.001 |
 | `processes` | Q S F | | Full process tree with command lines, owner, image hash (and signer in S/F). | T1059, T1055, T1036 |
 | `named_pipes` | Q S F | | Open named pipes. Default C2 pipe names (Cobalt Strike `msagent_##`, `postex_####`, ...) and PsExec-style pipes. | T1570, T1021.002, T1071 |
-| `powershell_history` | Q S F | | What was typed at PowerShell prompts (PSReadLine history per user, last 2,000 lines per file). | T1059.001 |
+| `powershell_history` | Q S F | | What was typed at PowerShell prompts (PSReadLine history per user, last 2,000 lines per file). The file has no timestamps; the report dates lines from matching 4104 script blocks (exact, needs `events_powershell` and script block logging), the file's last save (newest line) or the dated lines around them (range). | T1059.001 |
 | `bits_jobs` | Q S F | yes | BITS jobs for all users: remote URLs, local files, notify command lines. | T1197 |
 | `autoruns_registry` | Q S F | | Run/RunOnce, Winlogon, AppInit, LSA packages, IFEO debuggers (per user and machine). | T1547.001, T1547.004, T1546.010, T1546.012, T1547.002 |
 | `scheduled_tasks` | Q S F | | Tasks with actions, run-as, triggers, last run time, image hash. | T1053.005 |

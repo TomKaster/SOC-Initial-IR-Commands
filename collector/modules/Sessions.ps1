@@ -147,12 +147,22 @@ function Get-IRPowerShellHistory {
       PSReadLine command history (ConsoleHost_history.txt and other hosts' *_history.txt) for every profile.
       Shows what was typed interactively, which script block logging misses when it is off. Keeps the last
       2000 lines of each file. Opened with ReadWrite sharing so a live PSReadLine session does not block it.
+      The file has no timestamps; records carry the owner's SID and the file's created/last-written times so the
+      analysis side can date lines against 4104 script block events (see Get-IRHistoryTimeline).
+      PSReadLine saves a multi-line command as lines ending in a backtick; those are joined back into one command.
     #>
     [CmdletBinding()]
     param($Context)
     $maxLines = 2000
     $truncated = @()
+    # Profile folder -> SID, so history lines can be tied to the user's 4104 events (UserId is a SID).
+    $sidByPath = @{}
+    foreach ($k in @(Get-ChildItem -Path 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue)) {
+        $pip = (Get-ItemProperty -LiteralPath $k.PSPath -Name ProfileImagePath -ErrorAction SilentlyContinue).ProfileImagePath
+        if ($pip) { $sidByPath[[Environment]::ExpandEnvironmentVariables($pip).TrimEnd('\').ToLowerInvariant()] = $k.PSChildName }
+    }
     foreach ($u in Get-IRUserProfileDirs) {
+        $sid = $sidByPath[$u.FullName.TrimEnd('\').ToLowerInvariant()]
         $dir = Join-Path $u.FullName 'AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine'
         if (-not (Test-Path -LiteralPath $dir)) { continue }
         foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*_history.txt' -File -Force -ErrorAction SilentlyContinue)) {
@@ -169,13 +179,23 @@ function Get-IRPowerShellHistory {
             }
             $start = 0
             if ($lines.Count -gt $maxLines) { $start = $lines.Count - $maxLines; $truncated += "$($u.Name)\$($f.Name)" }
-            for ($i = $start; $i -lt $lines.Count; $i++) {
-                if ([string]::IsNullOrWhiteSpace($lines[$i])) { continue }
+            $i = $start
+            while ($i -lt $lines.Count) {
+                $first = $i
+                $cmd = $lines[$i]
+                while ($cmd.EndsWith('`') -and ($i + 1) -lt $lines.Count) {
+                    $i++
+                    $cmd = $cmd.Substring(0, $cmd.Length - 1) + "`n" + $lines[$i]
+                }
+                $i++
+                if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
                 [pscustomobject]@{
                     User             = $u.Name
+                    UserSid          = $sid
                     File             = $f.Name
-                    LineNumber       = $i + 1
-                    Command          = $lines[$i]
+                    LineNumber       = $first + 1
+                    Command          = $cmd
+                    FileCreatedUtc   = $f.CreationTimeUtc
                     FileLastWriteUtc = $f.LastWriteTimeUtc
                 }
             }

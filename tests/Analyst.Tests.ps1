@@ -157,6 +157,51 @@ Describe 'ConvertTo-TriageReport.ps1' {
         [System.IO.File]::ReadAllText($o) | Should -Match '<span class="primary">172\.20\.1\.9</span>'
     }
 }
+Describe 'PowerShell history timestamps' {
+    BeforeAll {
+        $sid = 'S-1-5-21-1-2-3-1001'
+        $ev = { param($id, $text, $time, $user) [pscustomobject]@{ TimeCreated = $time; EventId = 4104; RecordId = (Get-Random); UserId = $user; Data = [pscustomobject]@{ MessageNumber = '1'; MessageTotal = '1'; ScriptBlockText = $text; ScriptBlockId = $id; Path = '' } } }
+        $h = { param($n, $cmd) [pscustomobject]@{ User = 'jdoe'; UserSid = $sid; File = 'ConsoleHost_history.txt'; LineNumber = $n; Command = $cmd; FileCreatedUtc = '2026-01-01T00:00:00.0000000Z'; FileLastWriteUtc = '2026-01-01T12:00:00.0000000Z' } }
+        $d = Get-BaselineData
+        $d.powershell_history = @(
+            (& $h 1 'whoami'), (& $h 2 'Get-Process'), (& $h 3 'whoami'), (& $h 4 "Get-Date |`nOut-String"), (& $h 5 'ipconfig')
+        )
+        $d.events_powershell = @(
+            (& $ev 'w1' 'whoami' '2026-01-01T10:00:00.0000000Z' $sid),
+            (& $ev 'w2' 'whoami' '2026-01-01T11:00:00.0000000Z' $sid),
+            (& $ev 'm1' "Get-Date |`r`nOut-String" '2026-01-01T11:30:00.0000000Z' $sid),
+            (& $ev 'i1' 'ipconfig' '2026-01-01T11:45:00.0000000Z' 'S-1-5-21-9-9-9-500')
+        )
+        $p = New-FakeTriage -Path (Join-Path $root 'histtime') -Data $d
+        $tl = @(Get-IRHistoryTimeline (Import-IRTriage -Path $p))
+    }
+    It 'dates repeated commands to separate script blocks, in history order' {
+        ($tl | Where-Object LineNumber -eq 1).RanAt | Should -Be '2026-01-01 10:00:00Z'
+        ($tl | Where-Object LineNumber -eq 3).RanAt | Should -Be '2026-01-01 11:00:00Z'
+        ($tl | Where-Object LineNumber -eq 1).TimeBasis | Should -Be 'exact'
+    }
+    It 'bounds an undated line by its dated neighbours' {
+        $r = $tl | Where-Object LineNumber -eq 2
+        $r.TimeBasis | Should -Be 'range'
+        $r.RanAt | Should -Be '2026-01-01 10:00:00Z to 2026-01-01 11:00:00Z'
+    }
+    It 'matches multi-line commands regardless of line endings' {
+        ($tl | Where-Object LineNumber -eq 4).RanAt | Should -Be '2026-01-01 11:30:00Z'
+    }
+    It 'ignores script blocks from another user and falls back to the file save time for the last line' {
+        $r = $tl | Where-Object LineNumber -eq 5
+        $r.TimeBasis | Should -Be 'approx'
+        $r.RanAt | Should -Be '~2026-01-01 12:00:00Z'
+    }
+    It 'shows the times in the report' {
+        $o = Join-Path $root 'histtime.html'
+        $null = & (Join-Path $analyst 'ConvertTo-TriageReport.ps1') -Path $p -OutFile $o 6>$null
+        $html = [System.IO.File]::ReadAllText($o)
+        $html | Should -Match 'Ran at \(UTC\)'
+        $html | Should -Match '2026-01-01 10:00:00Z to 2026-01-01 11:00:00Z'
+    }
+}
+
 Describe 'Script block and log coverage leads' {
     BeforeAll {
         function New-Sb([string]$Id, [int]$N, [int]$Of, [string]$Text, [string]$Time = '2026-01-01T00:00:00Z', [string]$Path = '') {

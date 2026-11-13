@@ -93,7 +93,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'   # Progress bars slow down Compress-Archive and break headless sessions.
-$script:IRToolVersion = '2.3.0'
+$script:IRToolVersion = '2.4.0'
 $script:IRBuildInfo = 'source'
 
 #region BUILD:MODULES

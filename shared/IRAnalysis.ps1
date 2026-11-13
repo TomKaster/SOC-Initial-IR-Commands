@@ -216,6 +216,108 @@ function Get-IRScriptBlockLeads {
     }
 }
 
+function ConvertTo-IRUtcDate {
+    # ISO-8601 strings from the JSON (or DateTimes) -> UTC DateTime; $null if absent or unparseable.
+    param($Value)
+    if ($null -eq $Value -or "$Value" -eq '') { return $null }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    $d = [datetime]::MinValue
+    if ([datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$d)) { return $d.ToUniversalTime() }
+    return $null
+}
+
+function Format-IRUtc {
+    param([datetime]$Value)
+    return $Value.ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) + 'Z'
+}
+
+function Get-IRHistoryTimeline {
+    <#
+      PSReadLine history has no timestamps. Dates each line from evidence, and says how:
+        exact  - the same command text was logged as a 4104 script block by the same user (SID), in history order.
+        approx - last line of the file with no 4104 match: PSReadLine saves after every command, so it ran at
+                 about the file's last-write time.
+        range  - between the nearest dated lines before and after it (history is in run order), or at/before
+                 the file's last-write time when nothing later is dated.
+      Returns the powershell_history records with RanAt (display), RanAtUtc (exact/approx time, else upper bound)
+      and TimeBasis added, ordered by user, file and line.
+    #>
+    param($Triage)
+    $hist = @(Get-IRRecords $Triage 'powershell_history')
+    if ($hist.Count -eq 0) { return @() }
+
+    # Reassemble 4104 chunks into script blocks: text -> list of { Id, Time, Sid }.
+    $blocks = @{}
+    foreach ($e in @(Get-IRRecords $Triage 'events_powershell' | Where-Object { $_.EventId -eq 4104 })) {
+        $id = [string]$e.Data.ScriptBlockId
+        if (-not $id) { $id = "record-$($e.RecordId)" }
+        if (-not $blocks.ContainsKey($id)) { $blocks[$id] = New-Object System.Collections.ArrayList }
+        [void]$blocks[$id].Add($e)
+    }
+    $byText = @{}
+    foreach ($id in $blocks.Keys) {
+        $parts = @($blocks[$id] | Sort-Object { [int]("0" + $_.Data.MessageNumber) })
+        $text = (($parts | ForEach-Object { [string]$_.Data.ScriptBlockText }) -join '') -replace "`r`n", "`n"
+        $text = $text.Trim()
+        if (-not $text) { continue }
+        $t = @($parts | ForEach-Object { ConvertTo-IRUtcDate $_.TimeCreated } | Where-Object { $_ } | Sort-Object | Select-Object -First 1)
+        if (-not $t) { continue }
+        if (-not $byText.ContainsKey($text)) { $byText[$text] = New-Object System.Collections.ArrayList }
+        [void]$byText[$text].Add([pscustomobject]@{ Id = $id; Time = $t[0]; Sid = [string]$parts[0].UserId })
+    }
+
+    $used = @{}
+    $out = New-Object System.Collections.ArrayList
+    foreach ($g in @($hist | Group-Object { "$($_.User)|$($_.File)" } | Sort-Object Name)) {
+        $rows = @($g.Group | Sort-Object { [int]$_.LineNumber } | ForEach-Object {
+            $r = $_ | Select-Object *
+            $r | Add-Member -NotePropertyName RanAt -NotePropertyValue $null -Force
+            $r | Add-Member -NotePropertyName RanAtUtc -NotePropertyValue $null -Force
+            $r | Add-Member -NotePropertyName TimeBasis -NotePropertyValue 'unknown' -Force
+            $r
+        })
+        $lastWrite = ConvertTo-IRUtcDate $rows[0].FileLastWriteUtc
+        $sid = [string]$rows[0].UserSid
+
+        # Pass 1: exact matches, earliest unused block at or after the previous match (history is in run order).
+        $floor = $null
+        foreach ($r in $rows) {
+            $key = (([string]$r.Command) -replace "`r`n", "`n").Trim()
+            if (-not $byText.ContainsKey($key)) { continue }
+            $cand = @($byText[$key] | Where-Object {
+                    -not $used.ContainsKey($_.Id) -and (-not $sid -or -not $_.Sid -or $_.Sid -eq $sid) -and ($null -eq $floor -or $_.Time -ge $floor)
+                } | Sort-Object Time | Select-Object -First 1)
+            if (-not $cand) { continue }
+            $used[$cand[0].Id] = $true
+            $floor = $cand[0].Time
+            $r.RanAtUtc = $cand[0].Time
+            $r.TimeBasis = 'exact'
+            $r.RanAt = Format-IRUtc $cand[0].Time
+        }
+        # The newest line ran at about the time the file was last saved.
+        $last = $rows[-1]
+        if ($last.TimeBasis -ne 'exact' -and $lastWrite) {
+            $last.RanAtUtc = $lastWrite
+            $last.TimeBasis = 'approx'
+            $last.RanAt = '~' + (Format-IRUtc $lastWrite)
+        }
+        # Pass 2: bound the rest by their dated neighbours.
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $r = $rows[$i]
+            if ($r.TimeBasis -ne 'unknown') { continue }
+            $lo = $null; $hi = $null
+            for ($j = $i - 1; $j -ge 0; $j--) { if ($rows[$j].TimeBasis -in 'exact', 'approx') { $lo = $rows[$j].RanAtUtc; break } }
+            for ($j = $i + 1; $j -lt $rows.Count; $j++) { if ($rows[$j].TimeBasis -in 'exact', 'approx') { $hi = $rows[$j].RanAtUtc; break } }
+            if (-not $hi) { $hi = $lastWrite }
+            if ($lo -and $hi) { $r.RanAt = "$(Format-IRUtc $lo) to $(Format-IRUtc $hi)"; $r.TimeBasis = 'range'; $r.RanAtUtc = $hi }
+            elseif ($hi) { $r.RanAt = "at or before $(Format-IRUtc $hi)"; $r.TimeBasis = 'range'; $r.RanAtUtc = $hi }
+            elseif ($lo) { $r.RanAt = "after $(Format-IRUtc $lo)"; $r.TimeBasis = 'range' }
+        }
+        foreach ($r in $rows) { [void]$out.Add($r) }
+    }
+    return $out.ToArray()
+}
+
 # Default pipe names of C2 frameworks and remote-execution tools. Operators can rename them, so absence proves nothing.
 $script:IRPipePatterns = @(
     @{ Pattern = '^MSSE-\d+-server$'; Why = 'Cobalt Strike default (artifact kit)'; Severity = 'high' },
@@ -251,7 +353,7 @@ function Get-IRExtendedLeads {
 
     # PowerShell history: one lead per distinct suspicious command per user.
     $seen = @{}
-    foreach ($h in Get-IRRecords $Triage 'powershell_history') {
+    foreach ($h in @(Get-IRHistoryTimeline $Triage)) {
         $cmd = [string]$h.Command
         $sev = Get-IRCommandSeverity (' ' + $cmd)
         if (-not $sev) { continue }
@@ -259,7 +361,7 @@ function Get-IRExtendedLeads {
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
         $why = Test-IRSuspiciousCommand (' ' + $cmd)
-        New-IRLead $sev 'Execution' "PowerShell history of $($h.User) ($($why -join ', '))" ("{0} line {1} :: {2}" -f $h.File, $h.LineNumber, $cmd) 'powershell_history'
+        New-IRLead $sev 'Execution' "PowerShell history of $($h.User) ($($why -join ', '))" ("ran {0} ({1}); {2} line {3} :: {4}" -f $h.RanAt, $h.TimeBasis, $h.File, $h.LineNumber, $cmd) 'powershell_history'
     }
 
     # 4688: grade command lines, grouped so a looping task does not produce hundreds of leads.

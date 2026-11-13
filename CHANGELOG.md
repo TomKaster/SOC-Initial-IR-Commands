@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.0 - unreleased
+
+### Added
+- PowerShell history lines are dated in the report ("Ran at (UTC)" and "Basis"), since PSReadLine stores no timestamps:
+  **exact** when the same command was logged as a 4104 script block by the same user (matched in history order, so
+  repeated commands get their own times), **approx** for the newest line (the file's last save time), otherwise a
+  **range** between the nearest dated commands. History leads include the time.
+- `powershell_history` records the profile owner's SID and the file's created/last-written times, and joins multi-line
+  commands (saved by PSReadLine as lines ending in a backtick) back into one command.
+
 ## 2.3.0 - unreleased
 
 ### Added
