@@ -19,11 +19,13 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),
+    [string]$OutputDirectory,
     [string]$CertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
 $ErrorActionPreference = 'Stop'
+# Resolved here, not as a parameter default: Windows PowerShell 5.1 leaves $PSScriptRoot empty in param defaults under -File.
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot 'dist' }
 
 $src = Join-Path $PSScriptRoot 'collector\Invoke-IRTriage.ps1'
 $moduleDir = Join-Path $PSScriptRoot 'collector\modules'
