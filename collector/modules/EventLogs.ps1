@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/EventLogs.ps1
 # Targeted event log extraction. Only high-signal event IDs, bounded by lookback window and max count.
 
 function Get-IREvents {
@@ -19,15 +20,37 @@ function Get-IREvents {
     }
     $filter = @{ LogName = $LogName; Id = $Id; StartTime = $Context.LookbackStart }
     $events = @()
+    $noMatches = $false
     try {
         $events = @(Get-WinEvent -FilterHashtable $filter -MaxEvents $Context.MaxEvents -ErrorAction Stop)
     } catch {
-        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return }
-        throw
+        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $noMatches = $true } else { throw }
     }
-    if ($events.Count -ge $Context.MaxEvents) {
+    $truncated = ($events.Count -ge $Context.MaxEvents)
+    if ($truncated) {
         $Context.CollectorNote = (("{0} {1}: truncated at {2} events (newest kept)" -f $Context.CollectorNote, $LogName, $Context.MaxEvents)).Trim()
     }
+
+    # Coverage: how far back this log really reaches. A full circular log silently drops its oldest events,
+    # so "no events found" may only mean "no events left". The report turns gaps into leads.
+    $oldest = $null
+    try { $oldest = (Get-WinEvent -LogName $LogName -Oldest -MaxEvents 1 -ErrorAction Stop).TimeCreated } catch { $oldest = $null }
+    $maxBytes = [double]$log.MaximumSizeInBytes
+    $fileBytes = [double]$log.FileSize
+    [void]$Context.Coverage.Add([pscustomobject]@{
+        log                  = $LogName
+        oldestEventUtc       = (ConvertTo-IRIsoTime $oldest)
+        lookbackStartUtc     = (ConvertTo-IRIsoTime $Context.LookbackStart)
+        coversLookback       = [bool]($oldest -and $oldest -le $Context.LookbackStart)
+        logMode              = [string]$log.LogMode
+        maxSizeMB            = [math]::Round($maxBytes / 1MB, 1)
+        fileSizeMB           = [math]::Round($fileBytes / 1MB, 1)
+        isFull               = [bool]($maxBytes -gt 0 -and $fileBytes -ge 0.95 * $maxBytes)
+        recordCount          = $log.RecordCount
+        eventsCollected      = $events.Count
+        truncatedAtMaxEvents = $truncated
+    })
+    if ($noMatches) { return }
     foreach ($e in $events) {
         $data = [ordered]@{}
         try {
@@ -82,7 +105,8 @@ function Get-IREventsPowerShell {
     # 4104 script block logging, 4103 module logging.
     [CmdletBinding()]
     param($Context)
-    Get-IREvents -LogName 'Microsoft-Windows-PowerShell/Operational' -Id 4104, 4103 -Context $Context
+    # Script blocks are the evidence itself: keep their full text (Windows splits blocks into chunks of ~32K chars).
+    Get-IREvents -LogName 'Microsoft-Windows-PowerShell/Operational' -Id 4104, 4103 -Context $Context -MaxDataLength 65536
 }
 
 function Get-IREventsRdp {

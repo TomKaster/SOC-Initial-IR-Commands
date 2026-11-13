@@ -40,7 +40,14 @@ A shared, repeatable first hour so every analyst collects the same evidence the 
 - Triage is *not* a forensic image. If the case may go to legal or HR, escalate to full disk/memory acquisition per policy
   **before** remediation changes the host.
 
-## 5. Baselines
+## 5. Event log retention
+Windows defaults are small: PowerShell/Operational is 15 MB, which large scripts can fill within hours. A full circular log overwrites its oldest
+events, so a quiet log may only be an emptied one. The report raises a review lead whenever a log does not reach back to the lookback
+start. Fix it at the source with GPO (*Computer Configuration > Administrative Templates > Windows Components > Event Log Service*
+for Security/System, and `wevtutil sl Microsoft-Windows-PowerShell/Operational /ms:<bytes>` or your EDR/SIEM policy for PowerShell):
+size Security, System and PowerShell/Operational in the hundreds of MB, and forward them to the SIEM so retention does not depend on the endpoint.
+
+## 6. Baselines
 Keep a known-good collection for each standard build (`baselines\<build>.zip`), collected with the same profile from a
 freshly imaged machine that has the standard agent stack. Refresh it after each image or feature update. Without
 a baseline the diff is noise; with one, it is usually a short list.

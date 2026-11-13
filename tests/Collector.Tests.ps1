@@ -28,6 +28,19 @@ Describe 'Resolve-IRImagePath' {
         Resolve-IRImagePath '\SystemRoot\System32\drivers\acpi.sys' | Should -Be (Join-Path $env:SystemRoot 'System32\drivers\acpi.sys')
     }
     It 'returns null for empty input' { Resolve-IRImagePath '' | Should -BeNullOrEmpty }
+    It 'returns null for a quote-only value such as LSA Security Packages = ""' {
+        Resolve-IRImagePath '""' | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'File helpers tolerate junk paths' {
+    It '<p> is not a file and raises no error' -ForEach @(@{ p = '""' }, @{ p = 'a<b>c' }, @{ p = 'relative.exe' }, @{ p = 'C:\no\such\file.exe' }) {
+        $err = $null
+        Test-IRFilePath $p -ErrorVariable err | Should -BeFalse
+        $f = Get-IRFileFacts -Path $p -Context ([pscustomobject]@{ Signatures = $true }) -ErrorVariable +err
+        $f.Sha256 | Should -BeNullOrEmpty
+        $err | Should -BeNullOrEmpty
+    }
 }
 
 Describe 'Test-IRPrivateAddress' {

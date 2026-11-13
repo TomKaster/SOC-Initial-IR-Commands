@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Registry.ps1
 # Collector registry. Profiles (profiles/*.json) reference collectors by these names.
 #   Function      - function that returns records
 #   RequiresAdmin - skipped (status 'skipped_not_elevated') when the script is not elevated

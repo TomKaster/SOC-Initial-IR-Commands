@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Common.ps1
 # Common helpers shared by all collectors.
 # Target runtime: Windows PowerShell 5.1 (default on every supported Windows endpoint).
 # Keep this file ASCII-only so it parses identically with or without a BOM.
@@ -104,14 +105,32 @@ function Resolve-IRImagePath {
         $m = [regex]::Match($s, '^(.+?\.(exe|dll|sys|com|bat|cmd|ps1|vbs|js|jse|wsf|hta|scr|cpl|msi))(\s|,|$)', 'IgnoreCase')
         if ($m.Success) { $s = $m.Groups[1].Value }
     }
+    # Values like LSA "Security Packages" default to a literal "" - that is not a path.
+    $s = $s.Trim().Trim('"').Trim()
+    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
     $s = $s -replace '^\\\?\?\\', ''
     $s = $s -replace '^(?i)\\SystemRoot\\', ($env:SystemRoot + '\')
     if ($s -match '^(?i)system32\\') { $s = Join-Path $env:SystemRoot $s }
     if ($s -notmatch '\\' -and $s -match '\.\w{2,4}$') {
-        $candidate = Join-Path (Join-Path $env:SystemRoot 'System32') $s
-        if (Test-Path -LiteralPath $candidate) { $s = $candidate }
+        if ($s.IndexOfAny([System.IO.Path]::GetInvalidPathChars()) -lt 0) {
+            $candidate = [System.IO.Path]::Combine($env:SystemRoot, 'System32', $s)
+            if (Test-IRFilePath $candidate) { $s = $candidate }
+        }
     }
     return $s
+}
+
+function Test-IRFilePath {
+    <# True only for a syntactically valid, rooted path to an existing file. Never throws or writes errors. #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ($Path.IndexOfAny([System.IO.Path]::GetInvalidPathChars()) -ge 0) { return $false }
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($Path)) { return $false }
+        return [System.IO.File]::Exists($Path)
+    } catch { return $false }
 }
 
 function Test-IRUserWritablePath {
@@ -131,6 +150,10 @@ function Get-IRFileSha256 {
     $key = $Path.ToLowerInvariant()
     if ($script:IRHashCache.ContainsKey($key)) { return $script:IRHashCache[$key] }
     $hash = $null
+    if (-not (Test-IRFilePath $Path)) {
+        $script:IRHashCache[$key] = $null
+        return $null
+    }
     try {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
         if (-not $item.PSIsContainer -and $item.Length -le $MaxBytes) {
@@ -149,7 +172,7 @@ function Get-IRSignatureInfo {
     if ($script:IRSigCache.ContainsKey($key)) { return $script:IRSigCache[$key] }
     $info = $null
     try {
-        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        if (Test-IRFilePath $Path) {
             $sig = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
             $signer = $null
             if ($sig.SignerCertificate) { $signer = $sig.SignerCertificate.Subject }

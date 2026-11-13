@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Persistence.ps1
 # Persistence mechanisms: registry autoruns, scheduled tasks, services, WMI subscriptions, startup folders.
 
 function Get-IRAutorunsRegistry {

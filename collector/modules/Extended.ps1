@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Extended.ps1
 # Deeper (slower) artifacts used by the "full" profile.
 
 function Get-IRPrefetch {

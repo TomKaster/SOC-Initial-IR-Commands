@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT shared/IRReport.ps1
 # HTML report renderer, shared by the collector (report.html inside every collection) and
 # analyst\ConvertTo-TriageReport.ps1 (adds baseline diff / IOC hits). Output is one self-contained file:
 # no external fonts, scripts or images, so it opens offline in an isolated analysis VM.

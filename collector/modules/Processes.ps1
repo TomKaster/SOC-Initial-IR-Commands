@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Processes.ps1
 # Running processes with lineage, owner, hash and (optionally) signature.
 
 function Get-IRProcessOwnerMap {

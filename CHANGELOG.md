@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.1 - unreleased
+
+### Fixed
+- Registry values that are just a pair of quotes (LSA `Security Packages` defaults to `""`) were treated as file paths,
+  so `Test-Path` printed "Illegal characters in path" when signatures were checked (standard/full profiles).
+- PowerShell script blocks with only low-signal patterns (e.g. `-ExecutionPolicy Bypass`) were dropped from the leads instead of shown as review.
+- Script block text was cut at 8 KB per event; 4104 events now keep their full text.
+- IRTriage's own code, logged by script block logging when it runs, was flagged as high. It is now recognised and reported once as info, with its script paths.
+
+### Added
+- Event collectors record each log's real coverage (oldest event, size, full/circular, event cap hit) in the manifest.
+  The report raises a review lead when a log does not reach back to the lookback start, e.g. a full 15 MB PowerShell log.
+- Identical script blocks are grouped into one lead with a run count; chunks of one block are reassembled before matching.
+
+### Changed
+- `base64 decode` alone is graded review; combined with download/IEX patterns it is still high.
+
 ## 2.1.0 - unreleased
 
 ### Added

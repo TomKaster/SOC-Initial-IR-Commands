@@ -7,7 +7,8 @@ function New-FakeTriage {
         [string]$ComputerName = 'TESTHOST',
         [switch]$Zip,
         [bool]$Elevated = $true,
-        [switch]$NoHostIp
+        [switch]$NoHostIp,
+        [hashtable]$CollectorExtras = @{}
     )
     $enc = New-Object System.Text.UTF8Encoding($false)
     [void](New-Item -ItemType Directory -Path $Path -Force)
@@ -15,7 +16,9 @@ function New-FakeTriage {
     foreach ($k in $Data.Keys) {
         $json = ConvertTo-Json -InputObject @($Data[$k]) -Depth 8
         [System.IO.File]::WriteAllText((Join-Path $Path "$k.json"), $json, $enc)
-        $collectors += [ordered]@{ name = $k; status = 'ok'; records = @($Data[$k]).Count; durationMs = 1; files = @("$k.json"); note = $null; error = $null }
+        $entry = [ordered]@{ name = $k; status = 'ok'; records = @($Data[$k]).Count; durationMs = 1; files = @("$k.json"); note = $null; error = $null }
+        if ($CollectorExtras.ContainsKey($k)) { foreach ($x in $CollectorExtras[$k].Keys) { $entry[$x] = $CollectorExtras[$k][$x] } }
+        $collectors += $entry
     }
     $files = @(Get-ChildItem -LiteralPath $Path -File | Sort-Object Name | ForEach-Object {
         [ordered]@{ path = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }

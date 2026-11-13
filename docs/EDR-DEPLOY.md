@@ -109,4 +109,5 @@ Avoid interactive RDP to a suspect host to run it. That exposes privileged crede
 | Script blocked: "not digitally signed" | Sign with `build.ps1 -CertificateThumbprint`, or enable unsigned script execution in the EDR. |
 | `skipped_time_budget` | Profile budget reached (quick = 60 s). Use `-Collectors` to target what you need, or a larger profile. |
 | `OutputPath ... exists` | Previous run for the same case. Add `-Force` (only overwrites folders containing `manifest.json`). |
+| "... only reaches back to ..." lead | The event log is full and circular, so it overwrote the older events. Collect it sooner, or raise the log size (see PLAYBOOK, Event log retention). |
 | Hash mismatch on download | Re-download. If it persists, treat the collection as unverified and re-collect. |

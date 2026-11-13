@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Sessions.ps1
 # Users, sessions and SMB. Replaces the legacy `net session` / `net view` calls.
 
 function Get-IRSmbSessions {

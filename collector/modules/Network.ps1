@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT modules/Network.ps1
 # Network state. Replaces the legacy `ipconfig /all` and `netstat -naob` text output with objects.
 
 function Get-IRNetworkConnections {

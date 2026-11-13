@@ -61,6 +61,7 @@
     run Invoke-IRTriage.ps1 -parameters "-CaseId INC-1042 -Profile standard -Analyst jdoe"
 
 .NOTES
+    IRTRIAGE-COMPONENT collector entry point.
     Final line of output is "IRTRIAGE_RESULT {json}" so orchestration tooling can locate the zip and its hash.
 #>
 [CmdletBinding()]
@@ -92,7 +93,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'   # Progress bars slow down Compress-Archive and break headless sessions.
-$script:IRToolVersion = '2.1.0'
+$script:IRToolVersion = '2.1.1'
 $script:IRBuildInfo = 'source'
 
 #region BUILD:MODULES
@@ -172,6 +173,7 @@ $context = [pscustomobject]@{
     MaxDepth       = [int]$opt.maxDepth
     MaxFiles       = [int]$opt.maxFiles
     CollectorNote  = $null
+    Coverage       = (New-Object System.Collections.ArrayList)
 }
 
 if (-not $OutputPath) {
@@ -221,6 +223,7 @@ foreach ($name in $collectorNames) {
         $entry.status = 'skipped_time_budget'
     } else {
         $context.CollectorNote = $null
+        $context.Coverage = New-Object System.Collections.ArrayList
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             $records = @(& $def.Function -Context $context)
@@ -234,6 +237,7 @@ foreach ($name in $collectorNames) {
         $sw.Stop()
         $entry.durationMs = [int]$sw.Elapsed.TotalMilliseconds
         $entry.note = $context.CollectorNote
+        if ($context.Coverage.Count -gt 0) { $entry['logCoverage'] = @($context.Coverage.ToArray()) }
     }
     Write-IRStatus ("{0,-20} {1,-22} records={2,-6} {3}ms {4}" -f $name, $entry.status, $entry.records, $entry.durationMs, (($entry.error, $entry.note) -join ' ').Trim())
     [void]$results.Add([pscustomobject]$entry)

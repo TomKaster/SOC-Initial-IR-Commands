@@ -1,3 +1,4 @@
+# IRTRIAGE-COMPONENT shared/IRAnalysis.ps1
 # Shared analysis code: load a collection, verify integrity, derive heuristic leads.
 # Used by the analyst scripts (via analyst/TriageCommon.ps1) and by the collector, which builds report.html
 # on the endpoint. build.ps1 inlines this folder into the single-file collector, so keep it PS 5.1 + ASCII.
@@ -84,7 +85,7 @@ $script:IRSuspiciousCommandPatterns = @(
     @{ Pattern = '(?i)\s-(e|en|enc|enco|encod|encode|encoded|encodedc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}'; Why = 'PowerShell encoded command' },
     @{ Pattern = '(?i)(iex|invoke-expression)\s*[\(\$''"]'; Why = 'Invoke-Expression' },
     @{ Pattern = '(?i)(downloadstring|downloadfile|downloaddata|invoke-webrequest|iwr\s|invoke-restmethod|net\.webclient|start-bitstransfer)'; Why = 'download cradle' },
-    @{ Pattern = '(?i)frombase64string'; Why = 'base64 decode' },
+    @{ Pattern = '(?i)frombase64string'; Why = 'base64 decode'; Severity = 'review' },
     @{ Pattern = '(?i)-(w|win|window|windowstyle)\s+h(idden)?\b'; Why = 'hidden window'; Severity = 'review' },
     @{ Pattern = '(?i)-(ep|exec|executionpolicy)\s+bypass'; Why = 'execution policy bypass'; Severity = 'review' },
     @{ Pattern = '(?i)certutil(\.exe)?\s.*(-urlcache|-decode|-split)'; Why = 'certutil download/decode' },
@@ -130,6 +131,91 @@ function Test-IRUserWritablePathString {
     return [bool]($Path -match '(?i)\\(Users\\[^\\]+\\(AppData|Downloads|Desktop)|Users\\Public|ProgramData|Windows\\Temp|Temp|PerfLogs|\$Recycle\.Bin)\\')
 }
 
+function Get-IRLogCoverageLeads {
+    <#
+      Event collectors record how far back each log really reaches (manifest collectors[].logCoverage).
+      A log that is full and circular overwrites its oldest events, so a quiet log may just be an emptied one.
+    #>
+    param($Triage)
+    foreach ($c in @($Triage.Manifest.collectors | Where-Object { $_.PSObject.Properties['logCoverage'] -and $_.logCoverage })) {
+        foreach ($cov in @($c.logCoverage)) {
+            if ($cov.oldestEventUtc -and -not $cov.coversLookback) {
+                $oldest = ($cov.oldestEventUtc -replace 'T', ' ' -replace '\.\d+Z$', 'Z')
+                $start = ($cov.lookbackStartUtc -replace 'T', ' ' -replace '\.\d+Z$', 'Z')
+                if ($cov.isFull) {
+                    $detail = "Lookback starts $start, but the log is full ($($cov.fileSizeMB) of $($cov.maxSizeMB) MB, $($cov.logMode)) and older events were overwritten. Absence of events before $oldest proves nothing. Raise this log's maximum size by GPO."
+                } else {
+                    $detail = "Lookback starts $start, but the oldest event in the log is $oldest and the log is not full. It may have been cleared or recreated (check Security 1102 / System 104), or the host is newer than the lookback."
+                }
+                New-IRLead 'review' 'Collection' "$($cov.log) only reaches back to $oldest" $detail $c.name
+            }
+            if ($cov.truncatedAtMaxEvents) {
+                New-IRLead 'info' 'Collection' "$($cov.log): only the newest $($cov.eventsCollected) events were collected" "Matching events exceeded the profile's maxEventsPerCollector. Re-run with a larger profile or -LookbackHours to narrow the window." $c.name
+            }
+        }
+    }
+}
+
+function Get-IRScriptBlockLeads {
+    <#
+      4104 script blocks: chunks of one block share a ScriptBlockId, and the same script often runs many times.
+      Reassemble each block, group identical text into one lead, grade it with the command patterns, and
+      recognise IRTriage's own code (which contains these very patterns) instead of flagging it.
+    #>
+    param($Triage)
+    $events = @(Get-IRRecords $Triage 'events_powershell' | Where-Object { $_.EventId -eq 4104 })
+    if ($events.Count -eq 0) { return }
+
+    $blocks = @{}
+    foreach ($e in $events) {
+        $id = [string]$e.Data.ScriptBlockId
+        if (-not $id) { $id = "record-$($e.RecordId)" }
+        if (-not $blocks.ContainsKey($id)) { $blocks[$id] = New-Object System.Collections.ArrayList }
+        [void]$blocks[$id].Add($e)
+    }
+
+    $groups = @{}
+    $selfCount = 0
+    $selfPaths = New-Object System.Collections.ArrayList
+    foreach ($id in $blocks.Keys) {
+        $parts = @($blocks[$id] | Sort-Object { [int]("0" + $_.Data.MessageNumber) })
+        $text = ($parts | ForEach-Object { [string]$_.Data.ScriptBlockText }) -join ''
+        if ($text -match 'IRTRIAGE-COMPONENT|\$script:IRToolVersion\s*=|function Get-IRTriageLeads\b|IRTRIAGE_RESULT') {
+            $selfCount++
+            $sp = [string]$parts[0].Data.Path
+            if (-not $sp) { $sp = '(interactive or -Command, no script path)' }
+            if (-not $selfPaths.Contains($sp)) { [void]$selfPaths.Add($sp) }
+            continue
+        }
+        $sev = Get-IRCommandSeverity (' ' + $text)
+        if (-not $sev) { continue }
+        $key = "{0}|{1}" -f $text.Length, $text.Substring(0, [math]::Min(4000, $text.Length))
+        if (-not $groups.ContainsKey($key)) {
+            $groups[$key] = [pscustomobject]@{ Text = $text; Severity = $sev; Times = (New-Object System.Collections.ArrayList); Ids = (New-Object System.Collections.ArrayList); Path = [string]$parts[0].Data.Path }
+        }
+        foreach ($p in $parts) { [void]$groups[$key].Times.Add([string]$p.TimeCreated) }
+        [void]$groups[$key].Ids.Add($id)
+    }
+
+    foreach ($g in $groups.Values) {
+        $why = Test-IRSuspiciousCommand (' ' + $g.Text)
+        $times = @($g.Times | Sort-Object)
+        $runs = $g.Ids.Count
+        $snippet = ($g.Text -replace '\s+', ' ').Trim()
+        if ($snippet.Length -gt 400) { $snippet = $snippet.Substring(0, 400) + '...' }
+        $when = $times[0]
+        if ($runs -gt 1) { $when = "$($times[0]) to $($times[-1])" }
+        $src = ''
+        if ($g.Path) { $src = " from $($g.Path)" }
+        $title = "Suspicious PowerShell script block ($($why -join ', '))"
+        if ($runs -gt 1) { $title += " x$runs" }
+        New-IRLead $g.Severity 'Execution' $title ("{0}{1} :: {2}" -f $when, $src, $snippet) 'events_powershell'
+    }
+    if ($selfCount -gt 0) {
+        New-IRLead 'info' 'Collection' "IRTriage's own code appears in the PowerShell log ($selfCount script blocks)" ("Expected when the collector or analyst scripts run here: they contain the detection patterns, so they are not graded. Script paths: {0}. If a path is not a copy of IRTriage you recognise, review these blocks in events_powershell.json." -f (($selfPaths | Select-Object -First 8) -join '; ')) 'events_powershell'
+    }
+}
+
 function New-IRLead {
     param([string]$Severity, [string]$Category, [string]$Title, [string]$Detail, [string]$Collector)
     [pscustomobject]@{ Severity = $Severity; Category = $Category; Title = $Title; Detail = $Detail; Collector = $Collector }
@@ -149,6 +235,7 @@ function Get-IRTriageLeads {
     foreach ($c in @($Triage.Manifest.collectors | Where-Object { $_.status -eq 'error' })) {
         [void]$leads.Add((New-IRLead 'info' 'Collection' "Collector $($c.name) failed" $c.error $c.name))
     }
+    foreach ($lead in @(Get-IRLogCoverageLeads $Triage)) { [void]$leads.Add($lead) }
     if (-not $Triage.Manifest.case.elevated) {
         [void]$leads.Add((New-IRLead 'info' 'Collection' 'Collection was not elevated' 'Admin-only collectors were skipped and owners/paths may be missing.' 'manifest'))
     }
@@ -267,13 +354,7 @@ function Get-IRTriageLeads {
         [void]$leads.Add((New-IRLead $sev 'Persistence' "Service installed: $($e.Data.ServiceName)" ("{0} {1}" -f $e.TimeCreated, $e.Data.ImagePath) 'events_system'))
     }
     foreach ($e in @(Get-IRRecords $Triage 'events_system' | Where-Object { $_.EventId -eq 104 })) { [void]$leads.Add((New-IRLead 'high' 'Defense evasion' 'Event log cleared (104)' $e.TimeCreated 'events_system')) }
-    foreach ($e in @(Get-IRRecords $Triage 'events_powershell' | Where-Object { $_.EventId -eq 4104 })) {
-        $why = Test-IRSuspiciousCommand (' ' + $e.Data.ScriptBlockText)
-        if ($why.Count) {
-            $txt = [string]$e.Data.ScriptBlockText; if ($txt.Length -gt 300) { $txt = $txt.Substring(0, 300) + '...' }
-            [void]$leads.Add((New-IRLead 'high' 'Execution' "Suspicious PowerShell script block ($($why -join ', '))" ("{0} {1}" -f $e.TimeCreated, $txt) 'events_powershell'))
-        }
-    }
+    foreach ($lead in @(Get-IRScriptBlockLeads $Triage)) { [void]$leads.Add($lead) }
     foreach ($e in @(Get-IRRecords $Triage 'events_rdp' | Where-Object { $_.EventId -eq 1149 })) {
         [void]$leads.Add((New-IRLead 'info' 'Lateral movement' "RDP authentication from $($e.Data.Param3)" ("{0} user={1}\{2}" -f $e.TimeCreated, $e.Data.Param2, $e.Data.Param1) 'events_rdp'))
     }
