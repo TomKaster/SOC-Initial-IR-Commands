@@ -282,6 +282,21 @@ function Get-IRExtendedLeads {
         New-IRLead $g.Sev 'Execution' "Process created with suspicious command line ($($why -join ', '))" ("{0} {1}\{2} parent={3} :: {4}" -f $when, $first.Data.SubjectDomainName, $first.Data.SubjectUserName, $first.Data.ParentProcessName, $cmd) 'events_process_creation'
     }
 
+    # Installed applications: remote access tools (legitimate in many shops, but a favourite of intrusions and
+    # tech-support scams) and Store/MSIX packages that are sideloaded rather than Store- or enterprise-signed.
+    $rmm = '(?i)\b(anydesk|teamviewer|screenconnect|connectwise control|atera|splashtop|rustdesk|netsupport|kaseya|logmein|gotoassist|goto resolve|ammyy|remote utilities|meshagent|meshcentral|tightvnc|ultravnc|realvnc|vnc server|tigervnc|zoho assist|simplehelp|action1|n-able|bomgar|beyondtrust remote|dameware|supremo|remotepc|parsec|chrome remote desktop|level\.io|tactical rmm)\b'
+    $rmmSeen = @{}
+    foreach ($a in Get-IRRecords $Triage 'installed_software') {
+        $name = [string]$a.DisplayName
+        if ($name -match $rmm -and -not $rmmSeen.ContainsKey($name)) {
+            $rmmSeen[$name] = $true
+            New-IRLead 'review' 'Remote access' "Remote access tool installed: $name $($a.DisplayVersion)" ("{0} scope={1} installed={2} location={3}" -f $a.Publisher, $a.Scope, $a.InstallDate, $a.InstallLocation) 'installed_software'
+        }
+        if ($a.Type -eq 'Store' -and [string]$a.SignatureKind -in 'Developer', 'None') {
+            New-IRLead 'review' 'Execution' "Sideloaded app package: $name $($a.DisplayVersion)" ("signature={0} publisher={1} scope={2} location={3}" -f $a.SignatureKind, $a.Publisher, $a.Scope, $a.InstallLocation) 'installed_software'
+        }
+    }
+
     foreach ($e in Get-IRRecords $Triage 'events_security') {
         # Windows servicing creates and updates \Microsoft\ tasks constantly; only report the others.
         if ([int]$e.EventId -in 4698, 4702 -and [string]$e.Data.TaskName -like '\Microsoft\*') { continue }

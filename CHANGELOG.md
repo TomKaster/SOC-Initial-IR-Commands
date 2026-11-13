@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0 - unreleased
+
+### Added
+- Report sections and the tables inside them collapse: click a heading to fold it, or use Collapse all / Expand all in the
+  section bar. Jumping to a section from the bar or the lead tiles opens it. Without JavaScript, or when printing,
+  everything is shown.
+- **Installed applications** section in the report: name, version, publisher, type, scope, install date and location,
+  with a search box.
+- `installed_software` now also lists Microsoft Store/MSIX packages per user (all users when elevated), leaving out
+  frameworks and inbox Windows apps, and runs in the quick profile too. Install dates are shown as yyyy-MM-dd.
+- Leads: remote access tools (AnyDesk, TeamViewer, ScreenConnect, RustDesk, ...) and sideloaded app packages
+  (SignatureKind Developer/None) are review.
+
 ## 2.2.0 - unreleased
 
 ### Added

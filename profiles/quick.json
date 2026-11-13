@@ -33,6 +33,7 @@
     "scheduled_tasks",
     "services",
     "wmi_subscriptions",
-    "startup_folders"
+    "startup_folders",
+    "installed_software"
   ]
 }

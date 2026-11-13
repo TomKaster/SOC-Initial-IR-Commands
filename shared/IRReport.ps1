@@ -114,6 +114,19 @@ table.resizing { cursor: col-resize; user-select: none; }
 .chip.info, .chip.removed { color: var(--accent); background: var(--accent-soft); }
 .chip.ok { color: var(--good); background: var(--good-soft); }
 
+/* Collapsible sections and sub-tables. The fold buttons are added by the script, so without it everything stays open. */
+button.fold { font: inherit; color: inherit; letter-spacing: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 10px; text-align: left; }
+button.fold::before { content: ""; flex: none; width: 0; height: 0; border-inline: 5px solid transparent; border-top: 7px solid var(--muted);
+  transform: translateY(-2px); transition: transform .15s ease; }
+button.fold[aria-expanded="false"]::before { transform: translateY(-2px) rotate(-90deg); }
+button.fold:hover { color: var(--accent); }
+button.fold:hover::before { border-top-color: var(--accent); }
+.nav-tools { display: inline-flex; gap: 4px; margin-left: auto; padding-left: 12px; }
+.nav-tools button { white-space: nowrap; font: 600 13px/1 var(--font-body); color: var(--muted); background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 11px; cursor: pointer; }
+.nav-tools button:hover { color: var(--accent); border-color: var(--accent-2); }
+
 footer { color: var(--muted); font-size: 13px; padding-block: 0 32px; }
 @media (max-width: 720px) {
   .masthead .wrap { grid-template-columns: 1fr; }
@@ -122,7 +135,10 @@ footer { color: var(--muted); font-size: 13px; padding-block: 0 32px; }
   .hint { margin-left: 0; }
 }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
-@media print { nav.sections, .toolbar, .grip { display: none; } .table-wrap { overflow: visible; } }
+@media print {
+  nav.sections, .toolbar, .grip { display: none; } .table-wrap { overflow: visible; }
+  .fold-body[hidden] { display: block !important; } button.fold::before { display: none; }
+}
 '@
 
 $script:IRReportJs = @'
@@ -234,6 +250,61 @@ $script:IRReportJs = @'
     });
   });
 
+  // Collapsible sections (h2) and sub-tables (h3). Everything after a heading, up to the next heading of the
+  // same level, moves into a .fold-body; the heading text becomes a button that toggles it.
+  var folds = [], foldById = {};
+  function makeFold(heading, nodes) {
+    if (!nodes.length) return null;
+    var body = document.createElement("div");
+    body.className = "fold-body";
+    nodes[0].parentNode.insertBefore(body, nodes[0]);
+    nodes.forEach(function (n) { body.appendChild(n); });
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fold";
+    btn.setAttribute("aria-expanded", "true");
+    while (heading.firstChild) btn.appendChild(heading.firstChild);
+    heading.appendChild(btn);
+    var f = { body: body, set: function (open) { btn.setAttribute("aria-expanded", String(open)); body.hidden = !open; } };
+    btn.addEventListener("click", function () { f.set(btn.getAttribute("aria-expanded") !== "true"); });
+    folds.push(f);
+    return f;
+  }
+  function following(el, stop) {
+    var out = [], n = el.nextSibling;
+    while (n && !(n.nodeType === 1 && stop(n))) { out.push(n); n = n.nextSibling; }
+    return out;
+  }
+  // Folding is a convenience: if it fails, leave the report fully open and keep the rest of the script running.
+  try {
+    Array.prototype.forEach.call(document.querySelectorAll("main > section"), function (sec) {
+      var header = sec.querySelector(":scope > header"), h2 = header && header.querySelector("h2");
+      if (!h2) return;
+      var f = makeFold(h2, following(header, function () { return false; }));
+      if (!f) return;
+      foldById[sec.id] = f;
+      Array.prototype.forEach.call(f.body.querySelectorAll(":scope > h3"), function (h3) {
+        makeFold(h3, following(h3, function (n) { return n.tagName === "H3"; }));
+      });
+    });
+  } catch (e) {
+    folds.forEach(function (f) { f.set(true); });
+    folds = [];
+  }
+  function openSection(id) { if (foldById[id]) foldById[id].set(true); }
+  Array.prototype.forEach.call(document.querySelectorAll("nav.sections a[href^='#']"), function (a) {
+    a.addEventListener("click", function () { openSection(a.getAttribute("href").slice(1)); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-fold-all]"), function (b) {
+    if (!folds.length) return;
+    b.hidden = false;
+    b.addEventListener("click", function () {
+      var open = b.getAttribute("data-fold-all") === "expand";
+      folds.forEach(function (f) { f.set(open); });
+    });
+  });
+  if (location.hash) openSection(location.hash.slice(1));
+
   // Leads: severity filter + text search.
   var leads = document.getElementById("leads-table");
   if (leads) {
@@ -259,6 +330,7 @@ $script:IRReportJs = @'
         sev = t.getAttribute("data-jump-sev");
         search.value = "";
         apply();
+        openSection("leads");
         document.getElementById("leads").scrollIntoView();
       });
     });
@@ -542,7 +614,18 @@ function New-IRTriageReport {
             @{ Name = 'SessionId'; Label = 'Session'; Kind = 'num' }, @{ Name = 'CreationDate'; Label = 'Started (UTC)'; Kind = 'mono' },
             @{ Name = 'CommandLine'; Label = 'Command line'; Kind = 'mono'; Wide = $true }, @{ Name = 'ExecutablePath'; Label = 'Image path'; Kind = 'mono'; Wide = $true },
             @{ Name = 'Sha256'; Label = 'SHA-256'; Kind = 'mono' }, @{ Name = 'Signer'; Label = 'Signer'; Kind = 'text' }))
+    $appRows = @(Get-IRRecords $Triage 'installed_software' | Sort-Object @{ Expression = { [string]$_.DisplayName } }, Scope)
+    $storeCount = @($appRows | Where-Object { $_.Type -eq 'Store' }).Count
+    $appsSection = New-IRReportSection -Id 'apps' -Title 'Installed applications' -Count "$($appRows.Count - $storeCount) desktop, $storeCount Store" -Lede 'Desktop programs from the machine and per-user Uninstall keys, and Microsoft Store/MSIX packages per user (frameworks and inbox Windows apps omitted). Remote access tools and sideloaded packages are also raised as leads.' -Body (
+        '<div class="toolbar"><input id="apps-search" class="search" type="search" placeholder="Search applications" aria-label="Search installed applications" data-filter-table="apps-table"></div>' +
+        (ConvertTo-IRReportTable -Rows $appRows -Id 'apps-table' -Empty 'Installed applications were not collected (installed_software collector not run).' -Columns @(
+            @{ Name = 'DisplayName'; Label = 'Application'; Kind = 'text' }, @{ Name = 'DisplayVersion'; Label = 'Version'; Kind = 'mono' },
+            @{ Name = 'Publisher'; Label = 'Publisher'; Kind = 'text' }, @{ Name = 'Type'; Label = 'Type'; Kind = 'text' },
+            @{ Name = 'Scope'; Label = 'Scope'; Kind = 'text' }, @{ Name = 'InstallDate'; Label = 'Installed'; Kind = 'mono' },
+            @{ Name = 'SignatureKind'; Label = 'Package signature'; Kind = 'text' }, @{ Name = 'InstallLocation'; Label = 'Location'; Kind = 'mono'; Wide = $true })))
     [void]$body.Append((New-IRReportSection -Id 'processes' -Title 'Processes' -Count "$($procRows.Count) processes" -Lede 'Running processes in parent-child order, as of collection time. Suspicious command lines, Office children and images in user-writable or unsigned paths are also raised as leads.' -Body $procBody))
+    [void]$nav.Add(@('apps', 'Installed applications'))
+    [void]$body.Append($appsSection)
 
     [void]$nav.Add(@('accounts', 'Users and sessions'))
     $acctBody = '<h3>Logged-on users</h3>' +
@@ -577,6 +660,8 @@ function New-IRTriageReport {
     [void]$body.Append((New-IRReportSection -Id 'collection' -Title 'Collection' -Count "$okCount ok, $skipCount skipped, $errCount failed" -Body $collBody))
 
     $navHtml = ($nav | ForEach-Object { "<a href=""#$($_[0])"">$(ConvertTo-IRHtmlText $_[1])</a>" }) -join ''
+    # Shown by the script once sections are collapsible.
+    $navHtml += '<span class="nav-tools"><button type="button" data-fold-all="collapse" hidden>Collapse all</button><button type="button" data-fold-all="expand" hidden>Expand all</button></span>'
     $title = ConvertTo-IRHtmlText ("{0} triage {1}" -f $m.host.computerName, $m.case.caseId)
     $generated = ConvertTo-IRHtmlText ("Generated {0} UTC by {1}." -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss'), $GeneratedBy)
 

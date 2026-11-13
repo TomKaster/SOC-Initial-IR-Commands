@@ -179,6 +179,11 @@ Describe 'Invoke-IRTriage.ps1 (integration, quick profile)' {
         ($manifest.collectors | Where-Object name -eq 'named_pipes').records | Should -BeGreaterThan 0
         ($manifest.collectors | Where-Object name -eq 'powershell_history').status | Should -Be 'ok'
     }
+    It 'collects installed applications with versions in the quick profile' {
+        ($manifest.collectors | Where-Object name -eq 'installed_software').records | Should -BeGreaterThan 0
+        $apps = Get-Content -Raw (Join-Path $out 'installed_software.json') | ConvertFrom-Json
+        @($apps | Where-Object { $_.Type -eq 'Desktop' -and $_.DisplayVersion }).Count | Should -BeGreaterThan 0
+    }
     It 'prints paste-ready getfile lines' {
         # Status lines are Write-Host (information stream), so capture stream 6 for this run.
         $gf = Join-Path $tmp 'getfile'

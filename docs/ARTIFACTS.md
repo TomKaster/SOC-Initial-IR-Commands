@@ -28,7 +28,7 @@ What each collector gathers, the question it helps answer, and the related MITRE
 | `services` | Q S F | | Services with image path, ServiceDll, account, hash. | T1543.003 |
 | `wmi_subscriptions` | Q S F | yes | WMI event filters / consumers / bindings. | T1546.003 |
 | `startup_folders` | Q S F | | Startup folder items with resolved `.lnk` targets. | T1547.001 |
-| `installed_software` | S F | | Remote access tools (AnyDesk, ScreenConnect...), unexpected installs. | T1219 |
+| `installed_software` | Q S F | | Installed applications with versions: desktop programs (machine and per-user Uninstall keys) and Microsoft Store/MSIX packages per user (frameworks and inbox Windows apps omitted; all users when elevated). Remote access tools (AnyDesk, ScreenConnect...) and sideloaded packages become leads. | T1219, T1204.002 |
 | `defender` | S F | | RTP / tamper protection state, **exclusions**, detections, Defender event log. | T1562.001 |
 | `events_security` | S F | yes | 4624/4625/4648/4672 logons, 4720 + 4728/4732/4756 account and group changes, 4697 service install, 4698/4702 scheduled task created/updated, 4719 audit policy changed, 1102 log cleared. | T1078, T1110, T1098, T1053.005, T1562.002, T1070.001 |
 | `events_process_creation` | S F | yes | 4688 process creation with command line (needs "Audit Process Creation" and command-line inclusion by GPO). Own event budget. | T1059 |
