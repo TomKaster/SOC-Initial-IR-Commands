@@ -28,7 +28,8 @@ Only upload builds produced by CI from `main` (the `Invoke-IRTriage-unsigned` ar
 | Default output (interactive) | `C:\ProgramData\IRTriage\<ticket>_<HOST>_<utc>.zip`, path printed in output |
 | Proof of integrity | last stdout line `IRTRIAGE_RESULT {"zipSha256": ...}`, plus `<zip>.sha256` beside the zip |
 | Runtime | quick ≈ 20–60 s, standard ≈ 1–3 min, full ≈ 3–10 min (`-SkipSlow` drops `recent_executables`) |
-| Cleanup | the script leaves only the zip and `.sha256`. Delete them after retrieval if policy requires. |
+| Report | `report.html` is inside the zip. A copy is written beside it as `<OutputPath>-report.html` if you only want to `getfile` the report. |
+| Cleanup | the script leaves only the zip, `.sha256` and `-report.html`. Delete them after retrieval if policy requires. |
 
 ## 2. Microsoft Defender for Endpoint
 
@@ -56,7 +57,7 @@ $secret = Read-Host -AsSecureString 'MDE app secret'
 .\analyst\Invoke-FleetTriage.ps1 -ComputerName (Get-Content .\scope.txt) -CaseId INC-1042 -Profile quick `
     -TenantId $tenant -ClientId $appId -ClientSecret $secret -Analyst jdoe -WhatIf   # review, then drop -WhatIf
 ```
-Output: `cases\INC-1042\<host>.zip` (+ `.sha256`, `-script-output.txt`) and `fleet-summary.csv` with
+Output: `cases\INC-1042\<host>.zip` (+ `.sha256`, `-script-output.txt`, `-report.html`) and `fleet-summary.csv` with
 `Status`, `HashMatch` and errors per host. It runs up to `-MaxConcurrent` (default 10) sessions at once and retries 429/5xx.
 
 > MDE limits concurrent live response sessions per tenant (25 at time of writing). Keep `-MaxConcurrent` below that if

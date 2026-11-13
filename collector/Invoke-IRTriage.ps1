@@ -43,6 +43,13 @@
 .PARAMETER KeepFolder
     Keep the raw output folder after zipping (default removes it so only the zip + .sha256 remain).
 
+.PARAMETER NoReport
+    Do not build the HTML report. By default report.html is written inside the collection (and zip), and a copy
+    is written next to the zip as <OutputPath>-report.html so it can be opened straight away.
+
+.PARAMETER OpenReport
+    Open the report in the default browser when collection finishes (interactive sessions only; ignored under SYSTEM/EDR).
+
 .PARAMETER Force
     Overwrite an existing OutputPath, but only if it is a previous IRTriage output (contains manifest.json).
 
@@ -78,17 +85,23 @@ param(
     [switch]$SkipSlow,
     [switch]$NoZip,
     [switch]$KeepFolder,
+    [switch]$NoReport,
+    [switch]$OpenReport,
     [switch]$Force
 )
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'   # Progress bars slow down Compress-Archive and break headless sessions.
-$script:IRToolVersion = '2.0.0'
+$script:IRToolVersion = '2.1.0'
 $script:IRBuildInfo = 'source'
 
 #region BUILD:MODULES
 foreach ($moduleFile in @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'modules') -Filter '*.ps1' | Sort-Object Name)) {
     . $moduleFile.FullName
+}
+# Report/lead code shared with the analyst scripts.
+foreach ($sharedFile in @(Get-ChildItem -Path (Join-Path $PSScriptRoot '..\shared') -Filter '*.ps1' | Sort-Object Name)) {
+    . $sharedFile.FullName
 }
 #endregion BUILD:MODULES
 
@@ -240,12 +253,27 @@ if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) { $scriptHash =
 $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
 $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
 
+# Host addresses for the report header. Primary = IPv4 on an "up" adapter that has a default gateway.
+$primaryIPv4 = $null
+$ipAddresses = @()
+try {
+    $up = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object { $_.NetAdapter.Status -eq 'Up' })
+    $gw = @($up | Where-Object { $_.IPv4DefaultGateway } | ForEach-Object { @($_.IPv4Address)[0].IPAddress } | Where-Object { $_ })
+    if ($gw) { $primaryIPv4 = $gw[0] }
+    $ipAddresses = @(Get-NetIPAddress -ErrorAction Stop |
+        Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -notmatch '^(127\.|169\.254\.|::1$|fe80:)' } |
+        Sort-Object @{ Expression = { [string]$_.AddressFamily } }, InterfaceIndex | ForEach-Object { $_.IPAddress } | Select-Object -Unique)
+    if (-not $primaryIPv4) { $primaryIPv4 = $ipAddresses | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1 }
+} catch { $ipAddresses = @() }
+
 $manifest = [ordered]@{
     schemaVersion = 1
     tool          = [ordered]@{ name = 'IRTriage'; version = $script:IRToolVersion; build = $script:IRBuildInfo; scriptSha256 = $scriptHash; scriptPath = $PSCommandPath }
     case          = [ordered]@{ caseId = $CaseId; analyst = $Analyst; executedAs = $executedAs; elevated = $elevated }
     host          = [ordered]@{
         computerName = $env:COMPUTERNAME
+        primaryIPv4  = $primaryIPv4
+        ipAddresses  = @($ipAddresses)
         domain       = $cs.Domain
         osCaption    = $os.Caption
         osVersion    = $os.Version
@@ -269,6 +297,24 @@ $manifest = [ordered]@{
 Write-IRUtf8File -Path (Join-Path $OutputPath 'manifest.json') -Content (ConvertTo-Json -InputObject (ConvertTo-IRPlain $manifest) -Depth 8)
 
 # ---------------------------------------------------------------------------------------------
+# Report (built from the files just written, exactly as an analyst would load them)
+# ---------------------------------------------------------------------------------------------
+$reportPath = $null
+if (-not $NoReport) {
+    try {
+        $triage = Import-IRTriage -Path $OutputPath
+        $inner = New-IRTriageReport -Triage $triage -OutFile (Join-Path $OutputPath 'report.html') -GeneratedBy "Invoke-IRTriage.ps1 $script:IRToolVersion on $env:COMPUTERNAME"
+        $reportPath = "$OutputPath-report.html"
+        Copy-Item -LiteralPath $inner -Destination $reportPath -Force
+        $leadCounts = @(Get-IRTriageLeads -Triage $triage | Group-Object Severity | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
+        Write-IRStatus "Report: $reportPath  ($leadCounts)"
+    } catch {
+        $reportPath = $null
+        Write-IRStatus "WARNING: report generation failed: $($_.Exception.Message). Evidence is unaffected; rebuild it with analyst\ConvertTo-TriageReport.ps1."
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
 # Package
 # ---------------------------------------------------------------------------------------------
 $zipHash = $null
@@ -288,6 +334,14 @@ $summary = [ordered]@{
     host = $env:COMPUTERNAME; caseId = $CaseId; profile = $TriageProfile; elevated = $elevated
     outputPath = $(if ($NoZip -or $KeepFolder) { $OutputPath } else { $null })
     zipPath = $(if ($zipHash) { $zipPath } else { $null }); zipSha256 = $zipHash
+    reportPath = $reportPath
     errors = $errors; skipped = $skipped; durationSeconds = $manifest.run.durationSeconds
 }
+
+if ($OpenReport -and $reportPath) {
+    $isSystem = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -eq 'S-1-5-18')
+    if ([Environment]::UserInteractive -and -not $isSystem) { Invoke-Item -LiteralPath $reportPath }
+    else { Write-IRStatus 'Not opening the report: no interactive desktop in this session.' }
+}
+
 Write-Output ('IRTRIAGE_RESULT ' + (ConvertTo-Json -InputObject ([pscustomobject]$summary) -Compress))

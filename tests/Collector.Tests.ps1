@@ -96,6 +96,15 @@ Describe 'build.ps1' {
         $text | Should -Not -Match "Join-Path \`$PSScriptRoot 'modules'"
         $text | Should -Match "IRProfileJson\['quick'\]"
         $text | Should -Match 'function Get-IRServices'
+        $text | Should -Match 'function New-IRTriageReport'
+        $text | Should -Match 'function Get-IRTriageLeads'
+        $text | Should -Not -Match "Join-Path \`$PSScriptRoot '\.\.\\shared'"
+    }
+    It 'the built script produces a report on its own' {
+        $o = Join-Path $tmp 'built-run'
+        $lines = @(& $built -CaseId 'PESTER-B' -OutputPath $o -Collectors system_info, network_config 6>$null)
+        $r = ConvertFrom-Json (($lines | Where-Object { $_ -like 'IRTRIAGE_RESULT *' } | Select-Object -Last 1).Substring(16))
+        Test-Path -LiteralPath $r.reportPath | Should -BeTrue
     }
     It 'parses without errors' {
         $errors = $null
@@ -157,6 +166,28 @@ Describe 'Invoke-IRTriage.ps1 (integration, quick profile)' {
         foreach ($n in 'system_info', 'network_connections', 'processes', 'services') {
             ($manifest.collectors | Where-Object name -eq $n).records | Should -BeGreaterThan 0 -Because $n
         }
+    }
+    It 'builds report.html inside the collection and a copy next to the zip' {
+        Test-Path -LiteralPath (Join-Path $out 'report.html') | Should -BeTrue
+        $result.reportPath | Should -Be "$out-report.html"
+        Test-Path -LiteralPath $result.reportPath | Should -BeTrue
+        [System.IO.File]::ReadAllText($result.reportPath) | Should -Match ([regex]::Escape($env:COMPUTERNAME))
+    }
+    It 'records host IP addresses in the manifest' {
+        $manifest.host.PSObject.Properties.Name | Should -Contain 'primaryIPv4'
+        $manifest.host.PSObject.Properties.Name | Should -Contain 'ipAddresses'
+        if ($manifest.host.primaryIPv4) { $manifest.host.primaryIPv4 | Should -Match '^\d+\.\d+\.\d+\.\d+$' }
+    }
+    It 'still verifies cleanly with report.html present (it is derived, not evidence)' {
+        foreach ($s in Get-ChildItem (Join-Path $repo 'shared') -Filter '*.ps1') { . $s.FullName }
+        (Import-IRTriage -Path $out).Integrity.Valid | Should -BeTrue
+    }
+    It 'skips the report with -NoReport' {
+        $nr = Join-Path $tmp 'noreport'
+        $lines = @(& $collector -CaseId 'PESTER-3' -OutputPath $nr -NoReport -KeepFolder -Collectors system_info 6>$null)
+        $r = ConvertFrom-Json (($lines | Where-Object { $_ -like 'IRTRIAGE_RESULT *' } | Select-Object -Last 1).Substring(16))
+        $r.reportPath | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $nr 'report.html') | Should -BeFalse
     }
     It 'refuses to overwrite a non-IRTriage folder even with -Force' {
         $foreign = Join-Path $tmp 'foreign'

@@ -119,15 +119,41 @@ Describe 'Get-IRTriageLeads' {
 }
 
 Describe 'ConvertTo-TriageReport.ps1' {
-    It 'writes a self-contained HTML report and HTML-encodes collected data' {
+    BeforeAll {
         $out = Join-Path $root 'report.html'
         $null = & (Join-Path $analyst 'ConvertTo-TriageReport.ps1') -Path $suspectZip -OutFile $out -BaselinePath $baselineZip 6>$null
         $html = [System.IO.File]::ReadAllText($out)
+    }
+    It 'writes the host, integrity status and baseline diff' {
         $html | Should -Match 'WS-0193'
-        $html | Should -Match 'VERIFIED'
+        $html | Should -Match 'Integrity verified'
         $html | Should -Match 'Baseline diff'
-        $html | Should -Not -Match '<script'
-        $html | Should -Not -Match 'https?://(?!evil-cdn)'
-        $html | Should -Match '&#39;http://evil-cdn.example/a.ps1&#39;|&#39;http://evil-cdn\.example'
+    }
+    It 'shows the host IP address under the host name' {
+        $html | Should -Match '(?s)class="host">WS-0193</h1>\s*<p class="ip"><span class="label">IP address</span><span class="primary">10\.0\.0\.5</span>'
+    }
+    It 'is self-contained (no external scripts, styles or fonts)' {
+        $html | Should -Not -Match '<script[^>]+src='
+        $html | Should -Not -Match '<link[^>]+href='
+        $html | Should -Not -Match '@import'
+    }
+    It 'HTML-encodes collected data' {
+        $html | Should -Not -Match '<img src=x'
+        $html | Should -Match '&lt;img src=x'
+    }
+    It 'makes every data table resizable and marks lead severity on rows' {
+        $html | Should -Match '<table data-resizable id="leads-table">'
+        $html | Should -Match '<tr class="sev-high" data-sev="high">'
+    }
+    It 'falls back to network_config for the IP when the manifest has none' {
+        $d = Get-BaselineData
+        $d.network_config = @([pscustomobject]@{
+            IPAddresses   = @([pscustomobject]@{ InterfaceAlias = 'Ethernet'; IPAddress = '172.20.1.9'; AddressFamily = 'IPv4' })
+            DefaultRoutes = @([pscustomobject]@{ InterfaceAlias = 'Ethernet'; DestinationPrefix = '0.0.0.0/0' })
+        })
+        $old = New-FakeTriage -Path (Join-Path $root 'old-format') -Data $d -NoHostIp
+        $o = Join-Path $root 'old.html'
+        $null = & (Join-Path $analyst 'ConvertTo-TriageReport.ps1') -Path $old -OutFile $o 6>$null
+        [System.IO.File]::ReadAllText($o) | Should -Match '<span class="primary">172\.20\.1\.9</span>'
     }
 }

@@ -11,7 +11,8 @@
         (admin-consented), or a delegated token for a user with live response rights.
 
     Flow per machine:  RunScript (collector writes C:\ProgramData\IRTriage\<CaseId>_fleet.zip)  ->  GetFile (that zip)
-    -> poll the machine action -> download script output (to read the expected SHA-256) -> download the zip -> verify.
+    -> poll the machine action -> download script output (to read the expected SHA-256) -> download the zip -> verify
+    -> write <host>-report.html next to each zip.
 
     Secrets are only ever taken as SecureString parameters and are never written to disk or logs.
 
@@ -55,6 +56,7 @@ param(
     [ValidateRange(5, 300)][int]$PollSeconds = 20
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'TriageCommon.ps1')
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 function ConvertFrom-IRSecureString {
@@ -133,7 +135,7 @@ $jobs = New-Object System.Collections.ArrayList
 foreach ($name in $ComputerName) {
     $job = [pscustomobject]@{
         ComputerName = $name; MachineId = $null; ActionId = $null; Status = 'Pending'; Error = $null
-        ZipPath = $null; ExpectedSha256 = $null; ActualSha256 = $null; HashMatch = $null; Submitted = $null
+        ZipPath = $null; ReportPath = $null; ExpectedSha256 = $null; ActualSha256 = $null; HashMatch = $null; Submitted = $null
     }
     try {
         $m = Resolve-IRMachine $name
@@ -209,6 +211,11 @@ while (($i -lt $queue.Count -or $active.Count -gt 0) -and (Get-Date) -lt $deadli
             }
             $msg = "hash MISMATCH"; if ($job.HashMatch) { $msg = 'hash verified' }; if (-not $job.ExpectedSha256) { $msg = 'no expected hash in script output' }
             Write-Host "[$($job.ComputerName)] downloaded $zip ($msg)"
+            try {
+                $tri = Import-IRTriage -Path $zip
+                $job.ReportPath = New-IRTriageReport -Triage $tri -OutFile (Join-Path $OutputDirectory "$($job.ComputerName)-report.html") -GeneratedBy 'Invoke-FleetTriage.ps1'
+                Write-Host "[$($job.ComputerName)] report $($job.ReportPath)"
+            } catch { Write-Warning "[$($job.ComputerName)] report failed: $($_.Exception.Message)" }
         } catch { $job.Status = 'DownloadFailed'; $job.Error = "download: $($_.Exception.Message)"; Write-Warning "[$($job.ComputerName)] $($job.Error)" }
     }
 }
@@ -216,7 +223,7 @@ foreach ($job in @($jobs | Where-Object { $_.Status -in 'Pending', 'Submitted' }
 
 $script:token = $null
 $summaryPath = Join-Path $OutputDirectory 'fleet-summary.csv'
-$jobs | Select-Object ComputerName, MachineId, ActionId, Status, HashMatch, ExpectedSha256, ActualSha256, ZipPath, Error |
+$jobs | Select-Object ComputerName, MachineId, ActionId, Status, HashMatch, ExpectedSha256, ActualSha256, ZipPath, ReportPath, Error |
     Export-Csv -LiteralPath $summaryPath -NoTypeInformation -Encoding UTF8
 Write-Host "Summary: $summaryPath"
 $jobs

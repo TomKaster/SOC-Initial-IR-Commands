@@ -25,7 +25,7 @@ jobs:
       - name: PSScriptAnalyzer
         shell: powershell
         run: |
-          $paths = @('collector', 'analyst', 'build.ps1')
+          $paths = @('collector', 'analyst', 'shared', 'build.ps1')
           $findings = foreach ($p in $paths) { Invoke-ScriptAnalyzer -Path $p -Recurse -Settings .\PSScriptAnalyzerSettings.psd1 }
           $findings | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize -Wrap
           if ($findings) { throw "PSScriptAnalyzer reported $(@($findings).Count) finding(s)." }

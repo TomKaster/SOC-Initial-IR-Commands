@@ -11,10 +11,11 @@ A shared, repeatable first hour so every analyst collects the same evidence the 
 ## 1. Quick triage (minutes)
 1. Run the **quick** profile through EDR live response ([EDR-DEPLOY.md](EDR-DEPLOY.md)).
 2. Retrieve the zip into `cases\<CaseId>\` and check its hash against the `IRTRIAGE_RESULT` line.
-3. Build the report:
+3. Open `report.html` from the zip (or `<name>-report.html` beside it). To add the baseline diff, rebuild it:
    ```powershell
-   .\analyst\ConvertTo-TriageReport.ps1 -Path .\cases\INC-1042\WS-0193.zip -BaselinePath .\baselines\win11-23h2.zip
+   .\analyst\ConvertTo-TriageReport.ps1 -Path .\cases\INC-1042\WS-0193.zip -BaselinePath .\baselines\win11-23h2.zip -Open
    ```
+   In the report's tables, drag a column edge to resize it, and double-click the edge to fit the column on one line (double-click again to wrap).
 4. Work the **High** leads first, then **Review**. Leads are prompts, not verdicts: confirm each with the raw JSON/CSV,
    EDR telemetry and the user's context.
 

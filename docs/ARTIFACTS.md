@@ -45,4 +45,4 @@ What each collector gathers, the question it helps answer, and the related MITRE
 4. Register it in `collector/modules/Registry.ps1` (set `RequiresAdmin`, `Slow`, `Tabular`), add it to at least `profiles/full.json`, and add a row to this table.
 5. Bound the cost: honour `$Context.LookbackStart`, `MaxEvents`, `MaxFiles`, `MaxDepth`. Use `$Context.CollectorNote` to record truncation or "not present".
 6. Use `Get-IRFileFacts` for anything with an image path so hashing/signing is cached and consistent.
-7. Add a heuristic to `Get-IRTriageLeads` (analyst/TriageCommon.ps1) and a diff rule to `Compare-Triage.ps1` if the artifact is persistence or accounts.
+7. Add a heuristic to `Get-IRTriageLeads` (shared/IRAnalysis.ps1) and a diff rule to `Compare-Triage.ps1` if the artifact is persistence or accounts.

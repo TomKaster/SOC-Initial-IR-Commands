@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     EDR live response (MDE, CrowdStrike RTR, SentinelOne RemoteOps) uploads and runs one script file.
-    This inlines collector\modules\*.ps1 and profiles\*.json into collector\Invoke-IRTriage.ps1,
+    This inlines collector\modules\*.ps1, shared\*.ps1 and profiles\*.json into collector\Invoke-IRTriage.ps1,
     stamps the build (version + git commit), verifies the result parses, optionally Authenticode-signs
     it, and writes dist\Invoke-IRTriage.ps1 plus a .sha256 file.
 
@@ -27,6 +27,7 @@ $ErrorActionPreference = 'Stop'
 
 $src = Join-Path $PSScriptRoot 'collector\Invoke-IRTriage.ps1'
 $moduleDir = Join-Path $PSScriptRoot 'collector\modules'
+$sharedDir = Join-Path $PSScriptRoot 'shared'
 $profileDir = Join-Path $PSScriptRoot 'profiles'
 $text = [System.IO.File]::ReadAllText($src)
 
@@ -38,10 +39,11 @@ function Set-IRRegion {
     return [regex]::Replace($Text, $pattern, { param($m) $body }.GetNewClosure())
 }
 
-# Modules, in the same order the source script dot-sources them.
+# Modules then shared report code, in the same order the source script dot-sources them.
 $sb = New-Object System.Text.StringBuilder
-foreach ($m in @(Get-ChildItem -Path $moduleDir -Filter '*.ps1' | Sort-Object Name)) {
-    [void]$sb.AppendLine("# ----- module: $($m.Name) -----")
+$sources = @(Get-ChildItem -Path $moduleDir -Filter '*.ps1' | Sort-Object Name) + @(Get-ChildItem -Path $sharedDir -Filter '*.ps1' | Sort-Object Name)
+foreach ($m in $sources) {
+    [void]$sb.AppendLine("# ----- $($m.Directory.Name)/$($m.Name) -----")
     [void]$sb.AppendLine([System.IO.File]::ReadAllText($m.FullName).TrimEnd())
 }
 $text = Set-IRRegion -Text $text -Name 'MODULES' -Replacement $sb.ToString().TrimEnd()
